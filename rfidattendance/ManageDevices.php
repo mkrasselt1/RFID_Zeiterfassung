@@ -59,7 +59,7 @@ ob_start();
 			<tbody>
 			</tbody>
 		</table>
-		<button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#new-device" style="font-size: 18px; float: right; margin-top: -6px;">Neuer Leser</button>
+		<button type="button" class="btn btn-success" data-toggle="modal" data-target="#new-device" onClick="cleanAddDeviceModal();" style="font-size: 18px; float: right; margin-top: -6px;">Neuer Leser</button>
 		<esp-web-install-button manifest="/firmware/manifest.json">
 			<button slot="activate" class="btn btn-success">Installieren/Aktualisieren</button>
 			<span slot="unsupported">Mit deinem Browser ist das leider nicht möglich - Verwenden Sie Microsoft Edge/Google Chrome auf einem PC</span>
@@ -68,6 +68,12 @@ ob_start();
 		<!-- \\devices -->new-device
 		<script>
 			let table = null;
+
+			function cleanAddDeviceModal(){
+				$('#dev_id').val("");
+				$('#dev_name').val("");
+				$('#dev_dep').val("");
+			}
 
 			function addDevice() {
 				$.ajax({
@@ -240,7 +246,7 @@ ob_start();
 							targets: 5,
 							render: function(data, type, row, meta) {
 								return `
-								<button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#new-device" onClick="editDevice(${data})" title="Edit this device"><span class="fa fa-pencil"></span></button>
+								<button type="button" class="btn btn-success" data-toggle="modal" data-target="#new-device" onClick="editDevice(${data})" title="Edit this device"><span class="fa fa-pencil"></span></button>
 								<button type="button" class="btn btn-danger" onClick="deleteDevice(${data})" title="Delete this device"><span class="fa fa-trash"></span></button>`;
 							}
 						}
