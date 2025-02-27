@@ -106,6 +106,7 @@ ob_start();
             <th>Date</th>
             <th>Rein</th>
             <th>Raus</th>
+            <th>Zeit</th>
           </tr>
         </thead>
         <tbody>
@@ -164,6 +165,9 @@ ob_start();
         },
         {
           data: 'timeout'
+        },
+        {
+          data: 'elapsed'
         },
       ]
     });

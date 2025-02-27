@@ -92,13 +92,22 @@ if (isset($_POST)) {
   $newTimezone = new DateTimeZone($config["timezone"]);
   foreach ($logs as $logEntry) {
     //checkin
-    $logEntry->timein = (new DateTime($logEntry->checkindate . ' ' . $logEntry->timein, $serverTimezone))
-      ->setTimeZone($newTimezone)
+    $logEntry->timein = ($timein = (new DateTime($logEntry->checkindate . ' ' . $logEntry->timein, $serverTimezone))
+      ->setTimeZone($newTimezone))
       ->format('H:i:s');
-    //checkout
-    $logEntry->timeout = (new DateTime($logEntry->checkindate . ' ' . $logEntry->timeout, $serverTimezone))
-      ->setTimeZone($newTimezone)
-      ->format('H:i:s');
+
+    if ($logEntry->timeout != "00:00:00") {
+      //checkout
+      $timeout = (new DateTime($logEntry->checkindate . ' ' . $logEntry->timeout, $serverTimezone))
+        ->setTimeZone($newTimezone);
+
+      $logEntry->{"elapsed"} = ($timein->diff($timeout))->format(format: '%H:%i:%s');
+
+      //checkout2
+      $logEntry->timeout = $timeout->format('H:i:s');
+    } else {
+      $logEntry->{"elapsed"} = $logEntry->timeout = "";
+    }
   }
 
   //adjust output format
