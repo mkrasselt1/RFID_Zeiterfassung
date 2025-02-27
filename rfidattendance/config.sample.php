@@ -7,6 +7,12 @@ return array(
         "name" => "rfidattendance",
         "port" => 3306,
     ),
+    'operator' => array(
+        'name' => "company name",
+        'address' => "company address",
+        'telephone' => "company phone number",
+        'email' => "company email address",
+    ),
     "admin" => array(
         "email" => "admin@localhost",
         "name" => "Admins Name"

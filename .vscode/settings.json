@@ -9,5 +9,9 @@
         "ostream": "cpp",
         "type_traits": "cpp",
         "memory": "cpp"
-    }
+    },
+    "cSpell.words": [
+        "checkindate",
+        "timein"
+    ]
 }
