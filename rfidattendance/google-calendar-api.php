@@ -21,7 +21,7 @@ class GoogleCalendarApi
         }
     }
 
-    private function curl(string $url, string $curlPost, int &$returnCode, string $requestType = "")
+    private function curl(string $url, string $curlPost, int &$returnCode, string $requestType = ""): null|array|int|object
     {
         // var_dump($url, $curlPost);
         $ch = curl_init();
@@ -161,10 +161,14 @@ class GoogleCalendarApi
 
     public function GetCalendarsList()
     {
-        if(empty($this->clientId) && empty($refreshToken)){
+        if (empty($this->clientId) && empty($refreshToken)) {
             return [];
         }
-        $this->refreshAccessToken();
+        try {
+            $this->refreshAccessToken();
+        } catch (Exception $e) {
+            return [];
+        }
         $http_code = 0;
         $data = $this->curl(
             'https://www.googleapis.com/calendar/v3/users/me/calendarList?' . http_build_query([
@@ -184,7 +188,11 @@ class GoogleCalendarApi
     // need to add repeat argument here
     public function CreateCalendarEvent($calendarId, $summary, $allDay, $recurrence, $recurrenceEnd, $eventTime, $eventTimezone)
     {
-        $this->refreshAccessToken();
+        try {
+            $this->refreshAccessToken();
+        } catch (Exception $e) {
+            return;
+        }
         $curlPost = array('summary' => $summary); // event title
 
         // if event is an all day event or not 
@@ -209,7 +217,7 @@ class GoogleCalendarApi
             json_encode($curlPost),
             $http_code
         );
-        // echo '<pre>';print_r($data);echo '</pre>';
+        // echo '<pre>';var_dump($data, $http_code);echo '</pre>';exit;
         if ($http_code != 200)
             throw new Exception('Error : Failed to create event');
 
@@ -218,7 +226,11 @@ class GoogleCalendarApi
 
     public function UpdateCalendarEvent($eventId, $calendarId, $summary, $allDay, $eventTime, $eventTimezone)
     {
-        $this->refreshAccessToken();
+        try {
+            $this->refreshAccessToken();
+        } catch (Exception $e) {
+            return;
+        }
         $curlPost = array('summary' => $summary);
         if ($allDay == 1) {
             $curlPost['start'] = array('date' => $eventTime['event_date']);

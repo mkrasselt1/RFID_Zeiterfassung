@@ -321,6 +321,21 @@ function getLogList(string $search = ''): array
     return $return;
 }
 
+/**
+ * @return UserLogObject[]
+ */
+function getLogListWithoutCalendar(){
+    global $conn;
+    $result = $conn->query("SELECT * FROM " . UserLogObject::TABLE_NAME . " WHERE calendarEventId = ''");
+    $return = [];
+    if ($result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $return[] =  new UserLogObject($row, $conn);
+        }
+    }
+    return $return;
+}
+
 function getAdminBy(int $id = 0): ?AdminObject
 {
     global $conn;

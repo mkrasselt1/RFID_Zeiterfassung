@@ -2,7 +2,11 @@
 //Connect to database
 require 'connectDB.php';
 include "./google-calendar-api.php";
-$cAPI = new GoogleCalendarApi($config["google"]["clientId"], $config["google"]["clientSecret"], $config["google"]);
+$cAPI = new GoogleCalendarApi(
+    $config["google"]["clientId"],
+    $config["google"]["clientSecret"],
+    $config["google"]
+);
 $d = date("Y-m-d");
 $t = date("H:i:s");
 
