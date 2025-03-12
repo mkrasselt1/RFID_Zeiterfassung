@@ -326,7 +326,7 @@ function getLogList(string $search = ''): array
  */
 function getLogListWithoutCalendar(){
     global $conn;
-    $result = $conn->query("SELECT * FROM " . UserLogObject::TABLE_NAME . " WHERE calendarEventId = ''");
+    $result = $conn->query("SELECT * FROM " . UserLogObject::TABLE_NAME . " WHERE calendarEventId IS NULL");
     $return = [];
     if ($result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {

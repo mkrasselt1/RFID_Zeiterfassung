@@ -4,8 +4,8 @@ require 'connectDB.php';
 include "./google-calendar-api.php";
 $cAPI = new GoogleCalendarApi($config["google"]["clientId"], $config["google"]["clientSecret"], $config["google"]);
 
-
 $logsWithoutCalendar = getLogListWithoutCalendar();
+$limit = 100;
 foreach ($logsWithoutCalendar as $Log) {
     $user = getUserByCardId($Log->card_uid);
     if (new DateTime($Log->checkindate . " " . $Log->timein) > new DateTime($Log->checkindate . " " . $Log->timeout)) {
@@ -30,6 +30,10 @@ foreach ($logsWithoutCalendar as $Log) {
         if (!$Log->save()) {
             error("Error: SQL Checkout Fehler");
         }
+        $limit--;
+        if(!$limit)
+            exit;
+        sleep(1); //rate limit for google api
     }
 }
 if ($cAPI->tokenUpdated) {

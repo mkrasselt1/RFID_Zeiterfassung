@@ -186,12 +186,12 @@ class GoogleCalendarApi
     }
 
     // need to add repeat argument here
-    public function CreateCalendarEvent($calendarId, $summary, $allDay, $recurrence, $recurrenceEnd, $eventTime, $eventTimezone)
+    public function CreateCalendarEvent($calendarId, $summary, $allDay, $recurrence, $recurrenceEnd, $eventTime, $eventTimezone): ?string
     {
         try {
             $this->refreshAccessToken();
         } catch (Exception $e) {
-            return;
+            return null;
         }
         $curlPost = array('summary' => $summary); // event title
 
@@ -219,8 +219,7 @@ class GoogleCalendarApi
         );
         // echo '<pre>';var_dump($data, $http_code);echo '</pre>';exit;
         if ($http_code != 200)
-            throw new Exception('Error : Failed to create event');
-
+            throw new Exception('Error : Failed to create event:' . var_export($data, true));
         return $data['id'];
     }
 
