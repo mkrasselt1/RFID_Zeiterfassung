@@ -7,8 +7,8 @@ $cAPI = new GoogleCalendarApi(
     $config["google"]["clientSecret"],
     $config["google"]
 );
-$d = date("Y-m-d");
-$t = date("H:i:s");
+$d = \date("Y-m-d");
+$t = \date("H:i:s");
 
 $device_uid = filter_input(INPUT_GET, "device_token",  FILTER_VALIDATE_REGEXP, ['options' => ['regexp' => '/\A[[:xdigit:]]{16}\z/', 'default' => 0]]);
 $card_uid = filter_input(INPUT_GET, "card_uid",  FILTER_VALIDATE_REGEXP, ['options' => ['regexp' => '/\A[[:xdigit:]]{8,32}\z/', 'default' => 0]]);
