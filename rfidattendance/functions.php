@@ -9,6 +9,7 @@ interface ObjectInterface
     public function getData(): array;
 }
 
+#[\AllowDynamicProperties]
 class DatabaseObject implements ObjectInterface
 {
 
@@ -283,6 +284,17 @@ function selectUserByCardId(string $card_id = ""): ?UserObject
         if ($user->save()) {
             return $user;
         }
+    }
+    return null;
+}
+
+function getUserByEmail(string $email = ""): ?UserObject
+{
+    global $conn;
+    unselectUsers();
+    $result = $conn->query("SELECT * FROM " . UserObject::TABLE_NAME . " WHERE email = '$email' ORDER BY id DESC LIMIT 1");
+    if ($result->num_rows >= 1) {
+        return new UserObject($result->fetch_assoc(), $conn);
     }
     return null;
 }

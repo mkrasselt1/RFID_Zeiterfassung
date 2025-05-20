@@ -116,6 +116,9 @@ ob_start();
   </div>
   <script>
     let table = new DataTable('#records', {
+      language: {
+        url: '/dataTables.german.json',
+      },
       layout: {
         topStart: {
           buttons: ['copyHtml5', 'excelHtml5', 'csvHtml5', 'pdfHtml5']

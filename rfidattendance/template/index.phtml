@@ -46,8 +46,15 @@
     <h1 class="text-center my-4">
       <img src="/images/apple-touch-icon.png" class="rounded-circle" style="width: 50px; height: 50px; margin-right: 10px;">
       Zeiterfassung
-    </h1></h1>
-
+    </h1>
+    <!-- Serverzeit-Anzeige -->
+    <div class="text-center mb-3">
+      <strong>Serverzeit:</strong>
+      <span id="server-time" style="font-family: monospace;">
+        <?= date('Y-m-d H:i:s'); ?>
+      </span>
+    </div>
+    
     <!-- Horizontales Menü -->
     <nav class="navbar navbar-expand-lg navbar-light bg-light">
       <a class="navbar-brand" href="#">Startseite</a>
@@ -71,6 +78,9 @@
           <?php
           if (isset($_SESSION['Admin-name'])) { ?>
             <li class="nav-item">
+              <a class="nav-link" href="checkin.php">Ein-/Auschecken</a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="Settings.php"><?= $_SESSION['Admin-name'] ?></a>
             </li>
             <li class="nav-item">
@@ -84,6 +94,26 @@
         </ul>
       </div>
     </nav>
+
+    <script>
+      // Hole die Startzeit vom Server (in Sekunden seit 1970-01-01)
+      let serverTimestamp = <?= time(); ?> * 1000;
+
+      function updateServerTime() {
+        serverTimestamp += 1000;
+        const d = new Date(serverTimestamp);
+        // Format: YYYY-MM-DD HH:MM:SS
+        const pad = n => n.toString().padStart(2, '0');
+        const formatted = d.getFullYear() + '-' +
+          pad(d.getMonth() + 1) + '-' +
+          pad(d.getDate()) + ' ' +
+          pad(d.getHours()) + ':' +
+          pad(d.getMinutes()) + ':' +
+          pad(d.getSeconds());
+        document.getElementById('server-time').textContent = formatted;
+      }
+      setInterval(updateServerTime, 1000);
+    </script>
     <!-- Hauptinhalt -->
     <main class="mt-4">
       <?= $html; ?>
