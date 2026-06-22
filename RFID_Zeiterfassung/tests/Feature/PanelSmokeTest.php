@@ -173,6 +173,33 @@ class PanelSmokeTest extends TestCase
         $this->assertNotNull($vac->absence_id);
     }
 
+    public function test_days_without_contract_build_no_balance(): void
+    {
+        $employee = $this->makeEmployee(); // no contract
+        $employee->cards()->create([
+            'card_uid' => 'CC11DD22', 'username' => $employee->name, 'add_card' => 1,
+            'device_dep' => 'Buero', 'user_date' => '2026-06-01',
+        ]);
+        UserLog::create([
+            'username' => $employee->name, 'serialnumber' => 0, 'card_uid' => 'CC11DD22',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
+            'timein' => '08:00:00', 'timeout' => '16:00:00', 'card_out' => 1,
+        ]);
+
+        $service = app(WorktimeService::class);
+
+        // Worked day without a contract: Ist recorded, but no Soll/Saldo.
+        $wd = $service->recalculateDay($employee, Carbon::parse('2026-06-08'));
+        $this->assertNotNull($wd);
+        $this->assertSame(480, $wd->worked_minutes);
+        $this->assertSame(0, $wd->expected_minutes);
+        $this->assertSame(0, $wd->balance_minutes);
+        $this->assertSame(0, $employee->fresh()->overtimeBalanceMinutes());
+
+        // Empty day: no ledger row at all.
+        $this->assertNull($service->recalculateDay($employee, Carbon::parse('2026-06-07')));
+    }
+
     public function test_absence_request_can_be_approved_by_hr(): void
     {
         $hr = $this->makeEmployee(Employee::ROLE_HR, 'hr@example.de');

@@ -76,35 +76,50 @@ class WorktimeService
             ->first();
     }
 
-    /** Recompute (upsert) one ledger day for an employee. */
-    public function recalculateDay(Employee $employee, CarbonInterface $date): WorkDay
+    /**
+     * Recompute one ledger day for an employee. Returns null (and removes any
+     * existing row) for fully empty days, so weekends, future and contract-less
+     * days don't clutter the account.
+     */
+    public function recalculateDay(Employee $employee, CarbonInterface $date): ?WorkDay
     {
+        $day = Carbon::parse($date->toDateString());
         $worked = $this->workedMinutes($employee, $date);
-        $expected = $this->expectedMinutes($employee, $date);
+        $contract = $employee->activeContractOn($day);
         $absence = $this->approvedAbsenceOn($employee, $date);
 
-        // Future days don't accrue expected time yet — otherwise every upcoming
-        // workday would show a -Soll deficit before it even happened.
-        if (Carbon::parse($date->toDateString())->isAfter(Carbon::today())) {
-            $expected = 0;
-        }
+        // Expected time only within a contract, and not for future days.
+        $expected = ($contract && ! $day->isAfter(Carbon::today()))
+            ? $contract->expectedMinutesForDate($day)
+            : 0;
 
-        $storedExpected = $expected;
-        if ($absence && $absence->type === Absence::TYPE_UNPAID) {
+        if (! $contract) {
+            // No active contract → presence is recorded as Ist, but the day does
+            // not build any Soll/Saldo (otherwise legacy data inflates the balance).
             $storedExpected = 0;
+            $balance = 0;
+        } else {
+            $storedExpected = ($absence && $absence->type === Absence::TYPE_UNPAID) ? 0 : $expected;
+            $balance = match (true) {
+                $absence === null => $worked - $expected,
+                $absence->type === Absence::TYPE_VACATION,
+                $absence->type === Absence::TYPE_SICK => $worked,
+                $absence->type === Absence::TYPE_UNPAID => $worked,
+                $absence->type === Absence::TYPE_OVERTIME => $worked - $expected,
+                default => $worked - $expected,
+            };
         }
 
-        $balance = match (true) {
-            $absence === null => $worked - $expected,
-            $absence->type === Absence::TYPE_VACATION,
-            $absence->type === Absence::TYPE_SICK => $worked,
-            $absence->type === Absence::TYPE_UNPAID => $worked,
-            $absence->type === Absence::TYPE_OVERTIME => $worked - $expected,
-            default => $worked - $expected,
-        };
+        // Drop completely empty days (no work, no Soll, no absence).
+        if ($worked === 0 && $storedExpected === 0 && $absence === null) {
+            WorkDay::where('employee_id', $employee->id)
+                ->where('work_date', $day->toDateString())->delete();
+
+            return null;
+        }
 
         return WorkDay::updateOrCreate(
-            ['employee_id' => $employee->id, 'work_date' => $date->toDateString()],
+            ['employee_id' => $employee->id, 'work_date' => $day->toDateString()],
             [
                 'worked_minutes' => $worked,
                 'expected_minutes' => $storedExpected,
