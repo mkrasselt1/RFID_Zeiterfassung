@@ -2,17 +2,22 @@
 
 namespace App\Filament\Widgets;
 
+use App\Models\Employee;
 use App\Models\Setting;
 use App\Models\WorkDay;
 use Carbon\Carbon;
 use Filament\Widgets\ChartWidget;
+use Filament\Widgets\Concerns\InteractsWithPageFilters;
 
 /**
- * Cumulative overtime balance (hours) over the last 12 months for the logged-in
- * employee, starting from the carried-over balance before the window.
+ * Cumulative overtime balance (hours) over the last 12 months for the selected
+ * employee (dashboard filter for managers, else self), starting from the
+ * carried-over balance before the window.
  */
 class OvertimeTrendWidget extends ChartWidget
 {
+    use InteractsWithPageFilters;
+
     protected static ?string $heading = 'Überstunden-Verlauf';
 
     protected static ?int $sort = 2;
@@ -24,7 +29,13 @@ class OvertimeTrendWidget extends ChartWidget
 
     protected function getData(): array
     {
-        $employee = auth()->user();
+        $user = auth()->user();
+        $employee = (! $user || ! $user->canManagePeople())
+            ? $user
+            : (Employee::find($this->filters['employee_id'] ?? null) ?? $user);
+        if (! $employee) {
+            return ['datasets' => [], 'labels' => []];
+        }
         $goLive = Setting::get('tracking_start');
         $base = fn () => WorkDay::where('employee_id', $employee->id)
             ->when($goLive, fn ($q) => $q->where('work_date', '>=', $goLive));

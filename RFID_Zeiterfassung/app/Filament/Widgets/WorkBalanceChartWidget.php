@@ -2,17 +2,21 @@
 
 namespace App\Filament\Widgets;
 
+use App\Models\Employee;
 use App\Models\Setting;
 use App\Models\WorkDay;
 use Carbon\Carbon;
 use Filament\Widgets\ChartWidget;
+use Filament\Widgets\Concerns\InteractsWithPageFilters;
 
 /**
- * Soll vs. Ist (hours) per month over the last 12 months for the logged-in
- * employee.
+ * Soll vs. Ist (hours) per month over the last 12 months for the selected
+ * employee (dashboard filter for managers, else self).
  */
 class WorkBalanceChartWidget extends ChartWidget
 {
+    use InteractsWithPageFilters;
+
     protected static ?string $heading = 'Soll / Ist je Monat';
 
     protected static ?int $sort = 3;
@@ -24,7 +28,13 @@ class WorkBalanceChartWidget extends ChartWidget
 
     protected function getData(): array
     {
-        $employee = auth()->user();
+        $user = auth()->user();
+        $employee = (! $user || ! $user->canManagePeople())
+            ? $user
+            : (Employee::find($this->filters['employee_id'] ?? null) ?? $user);
+        if (! $employee) {
+            return ['datasets' => [], 'labels' => []];
+        }
         $goLive = Setting::get('tracking_start');
 
         $labels = [];

@@ -4,21 +4,36 @@ namespace App\Filament\Widgets;
 
 use App\Filament\Resources\WorkDayResource;
 use App\Models\Absence;
+use App\Models\Employee;
 use App\Services\WorktimeService;
 use Carbon\Carbon;
+use Filament\Widgets\Concerns\InteractsWithPageFilters;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
 /**
- * Personal time stats for the logged-in employee: vacation balance, overtime
- * balance and this week's worked-vs-expected. Managers additionally see the
- * number of pending absence requests awaiting their decision.
+ * Time stats for the selected employee (managers can pick one via the dashboard
+ * filter; employees always see their own): vacation balance, overtime balance
+ * and this week's worked-vs-expected, plus pending requests for managers.
  */
 class MyStatsWidget extends StatsOverviewWidget
 {
+    use InteractsWithPageFilters;
+
+    /** Employee whose data to show: dashboard-selected for managers, else self. */
+    protected function targetEmployee(): ?Employee
+    {
+        $user = auth()->user();
+        if (! $user || ! $user->canManagePeople()) {
+            return $user;
+        }
+
+        return Employee::find($this->filters['employee_id'] ?? null) ?? $user;
+    }
+
     protected function getStats(): array
     {
-        $employee = auth()->user();
+        $employee = $this->targetEmployee();
         if (! $employee) {
             return [];
         }
