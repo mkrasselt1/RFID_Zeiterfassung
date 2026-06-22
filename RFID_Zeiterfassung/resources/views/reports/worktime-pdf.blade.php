@@ -38,11 +38,16 @@
 
     <table class="summary">
         <tr>
-            <td><div class="label">Soll</div><div class="val">{{ R::hhmm($r['month_sum']['soll']) }}</div></td>
-            <td><div class="label">Ist</div><div class="val">{{ R::hhmm($r['month_sum']['ist']) }}</div></td>
+            <td><div class="label">Soll (Monat)</div><div class="val">{{ R::hhmm($r['month_sum']['soll']) }}</div></td>
+            <td><div class="label">Ist (Monat)</div><div class="val">{{ R::hhmm($r['month_sum']['ist']) }}</div></td>
             <td><div class="label">Saldo Monat</div><div class="val {{ $r['month_sum']['saldo'] < 0 ? 'neg' : ($r['month_sum']['saldo'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['month_sum']['saldo']) }}</div></td>
-            <td><div class="label">Saldo gesamt</div><div class="val {{ $r['total_balance'] < 0 ? 'neg' : ($r['total_balance'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['total_balance']) }}</div></td>
             <td><div class="label">Resturlaub</div><div class="val">{{ number_format($r['vacation_left'], 1, ',', '.') }} T</div></td>
+        </tr>
+        <tr>
+            <td><div class="label">Übertrag (Vorjahre)</div><div class="val {{ $r['carryover'] < 0 ? 'neg' : ($r['carryover'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['carryover']) }}</div></td>
+            <td><div class="label">Saldo {{ $r['period']->year }}</div><div class="val {{ $r['year_balance'] < 0 ? 'neg' : ($r['year_balance'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['year_balance']) }}</div></td>
+            <td><div class="label">Saldo gesamt</div><div class="val {{ $r['total_balance'] < 0 ? 'neg' : ($r['total_balance'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['total_balance']) }}</div></td>
+            <td></td>
         </tr>
     </table>
 

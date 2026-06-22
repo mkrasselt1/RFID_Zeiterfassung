@@ -71,14 +71,13 @@ class WorkDayResource extends Resource
                     ->options(fn () => Employee::orderBy('name')->pluck('name', 'id'))
                     ->searchable()
                     ->visible($isManager),
-                Tables\Filters\Filter::make('range')
-                    ->form([
-                        Forms\Components\DatePicker::make('from')->label('Von'),
-                        Forms\Components\DatePicker::make('until')->label('Bis'),
-                    ])
+                Tables\Filters\SelectFilter::make('year')
+                    ->label('Jahr')
+                    ->options(fn () => collect(range((int) now()->year, (int) now()->year - 5))
+                        ->mapWithKeys(fn ($y) => [$y => (string) $y])->all())
+                    ->default((int) now()->year)
                     ->query(fn (Builder $q, array $data) => $q
-                        ->when($data['from'], fn (Builder $q, $d) => $q->whereDate('work_date', '>=', $d))
-                        ->when($data['until'], fn (Builder $q, $d) => $q->whereDate('work_date', '<=', $d))),
+                        ->when($data['value'], fn (Builder $q, $y) => $q->whereYear('work_date', $y))),
             ])
             ->actions([
                 Tables\Actions\Action::make('details')

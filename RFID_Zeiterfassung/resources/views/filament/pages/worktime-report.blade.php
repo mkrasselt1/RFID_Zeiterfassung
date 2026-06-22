@@ -5,34 +5,41 @@
     @php $r = $this->getReport(); @endphp
 
     <x-filament::section>
-        <div class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6 text-center">
+        @php
+            $balanceClass = fn (int $v) => $v < 0 ? 'text-danger-600' : ($v > 0 ? 'text-success-600' : '');
+        @endphp
+        <div class="grid grid-cols-2 gap-4 md:grid-cols-4 text-center">
             <div>
-                <div class="text-sm text-gray-500">Soll</div>
+                <div class="text-sm text-gray-500">Soll (Monat)</div>
                 <div class="text-xl font-bold">{{ R::hhmm($r['month_sum']['soll']) }}</div>
             </div>
             <div>
-                <div class="text-sm text-gray-500">Ist</div>
+                <div class="text-sm text-gray-500">Ist (Monat)</div>
                 <div class="text-xl font-bold">{{ R::hhmm($r['month_sum']['ist']) }}</div>
             </div>
             <div>
                 <div class="text-sm text-gray-500">Saldo Monat</div>
-                <div @class([
-                    'text-xl font-bold',
-                    'text-danger-600' => $r['month_sum']['saldo'] < 0,
-                    'text-success-600' => $r['month_sum']['saldo'] > 0,
-                ])>{{ R::hhmm($r['month_sum']['saldo']) }}</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Saldo gesamt</div>
-                <div @class([
-                    'text-xl font-bold',
-                    'text-danger-600' => $r['total_balance'] < 0,
-                    'text-success-600' => $r['total_balance'] > 0,
-                ])>{{ R::hhmm($r['total_balance']) }}</div>
+                <div @class(['text-xl font-bold', $balanceClass($r['month_sum']['saldo'])])>
+                    {{ R::hhmm($r['month_sum']['saldo']) }}</div>
             </div>
             <div>
                 <div class="text-sm text-gray-500">Resturlaub</div>
                 <div class="text-xl font-bold">{{ number_format($r['vacation_left'], 1, ',', '.') }} T</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Übertrag (Vorjahre)</div>
+                <div @class(['text-xl font-bold', $balanceClass($r['carryover'])])>
+                    {{ R::hhmm($r['carryover']) }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Saldo {{ $r['period']->year }}</div>
+                <div @class(['text-xl font-bold', $balanceClass($r['year_balance'])])>
+                    {{ R::hhmm($r['year_balance']) }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Saldo gesamt</div>
+                <div @class(['text-xl font-bold', $balanceClass($r['total_balance'])])>
+                    {{ R::hhmm($r['total_balance']) }}</div>
             </div>
             <div>
                 <div class="text-sm text-gray-500">Abwesenheit</div>

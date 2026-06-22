@@ -102,13 +102,23 @@ class WorktimeReport
             }
         }
 
+        // Year view: carryover from previous years + this year's running balance.
+        $goLive = Setting::get('tracking_start');
+        $base = fn () => WorkDay::where('employee_id', $employee->id)
+            ->when($goLive, fn ($q) => $q->where('work_date', '>=', $goLive));
+        $carryover = (int) $base()->where('work_date', '<', "{$year}-01-01")->sum('balance_minutes');
+        $yearBalance = (int) $base()
+            ->whereBetween('work_date', ["{$year}-01-01", "{$year}-12-31"])->sum('balance_minutes');
+
         return [
             'employee' => $employee,
             'contract' => $employee->activeContractOn($monthStart),
             'period' => $monthStart,
             'weeks' => array_values($weeks),
             'month_sum' => $monthSum,
-            'total_balance' => $employee->overtimeBalanceMinutes(),
+            'carryover' => $carryover,
+            'year_balance' => $yearBalance,
+            'total_balance' => $carryover + $yearBalance,
             'vacation_left' => $employee->vacationBalance($year),
             'absence_days' => $absenceDays,
         ];
