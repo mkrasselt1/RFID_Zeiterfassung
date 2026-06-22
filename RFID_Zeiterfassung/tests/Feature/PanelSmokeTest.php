@@ -200,6 +200,29 @@ class PanelSmokeTest extends TestCase
         $this->assertNull($service->recalculateDay($employee, Carbon::parse('2026-06-07')));
     }
 
+    public function test_tracking_start_excludes_earlier_days(): void
+    {
+        $employee = $this->makeEmployee();
+        $employee->contracts()->create([
+            'valid_from' => '1990-01-01', 'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8, 'workdays' => [1, 2, 3, 4, 5],
+        ]);
+        \App\Models\Setting::put('tracking_start', '2026-06-01');
+
+        $service = app(WorktimeService::class);
+
+        // Workday before go-live → no row at all (contract goes back to 1990).
+        $this->assertNull($service->recalculateDay($employee, Carbon::parse('2026-05-20')));
+
+        // Workday after go-live with no work → counts as -Soll.
+        $after = $service->recalculateDay($employee, Carbon::parse('2026-06-08'));
+        $this->assertNotNull($after);
+        $this->assertSame(-480, $after->balance_minutes);
+
+        // "Saldo gesamt" only sums from the go-live date.
+        $this->assertSame(-480, $employee->fresh()->overtimeBalanceMinutes());
+    }
+
     public function test_absence_request_can_be_approved_by_hr(): void
     {
         $hr = $this->makeEmployee(Employee::ROLE_HR, 'hr@example.de');

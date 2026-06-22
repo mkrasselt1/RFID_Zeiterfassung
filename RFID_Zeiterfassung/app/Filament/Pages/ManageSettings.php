@@ -49,6 +49,7 @@ class ManageSettings extends Page implements HasForms
             'admin_pwd_new' => null,
             'timezone' => Setting::get('timezone', 'Europe/Berlin'),
             'holiday_region' => Setting::get('holiday_region', 'DE-SN'),
+            'tracking_start' => Setting::get('tracking_start'),
             'operator_name' => $operator['name'] ?? '',
             'operator_address' => $operator['address'] ?? '',
             'operator_telephone' => $operator['telephone'] ?? '',
@@ -79,6 +80,9 @@ class ManageSettings extends Page implements HasForms
                             ->label('Bundesland (Feiertage)')
                             ->options(\App\Services\HolidayService::REGIONS)
                             ->helperText('Gilt für die automatische Feiertags-Berechnung.'),
+                        \Filament\Forms\Components\DatePicker::make('tracking_start')
+                            ->label('Zeiterfassung aktiv ab')
+                            ->helperText('Tage vor diesem Datum bauen kein Soll/Saldo (z. B. Go-Live der Stempeluhren). Leer = keine Grenze.'),
                     ])->columns(2),
                 Section::make('Betreiber')
                     ->schema([
@@ -114,6 +118,7 @@ class ManageSettings extends Page implements HasForms
 
         Setting::put('timezone', $data['timezone']);
         Setting::put('holiday_region', $data['holiday_region'] ?? 'DE-SN');
+        Setting::put('tracking_start', $data['tracking_start'] ?: null);
         Setting::put('operator', [
             'name' => $data['operator_name'],
             'address' => $data['operator_address'],

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Absence;
 use App\Models\Cardholder;
 use App\Models\Employee;
+use App\Models\Setting;
 use App\Models\UserLog;
 use App\Models\WorkDay;
 use Carbon\Carbon;
@@ -84,6 +85,17 @@ class WorktimeService
     public function recalculateDay(Employee $employee, CarbonInterface $date): ?WorkDay
     {
         $day = Carbon::parse($date->toDateString());
+
+        // Global "tracking active from" cut-off: days before go-live never build
+        // a balance (guards against a mis-set contract start far in the past).
+        $start = Setting::get('tracking_start');
+        if ($start && $day->toDateString() < $start) {
+            WorkDay::where('employee_id', $employee->id)
+                ->where('work_date', $day->toDateString())->delete();
+
+            return null;
+        }
+
         $worked = $this->workedMinutes($employee, $date);
         $contract = $employee->activeContractOn($day);
         $absence = $this->approvedAbsenceOn($employee, $date);

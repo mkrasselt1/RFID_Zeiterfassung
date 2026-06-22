@@ -122,10 +122,15 @@ class Employee extends Authenticatable implements FilamentUser, HasName
         return $entitlement - $taken;
     }
 
-    /** Net overtime in minutes across the whole ledger (sum of balances). */
+    /** Net overtime in minutes across the ledger (from the go-live cut-off, if set). */
     public function overtimeBalanceMinutes(): int
     {
-        return (int) $this->workDays()->sum('balance_minutes');
+        $query = $this->workDays();
+        if ($start = Setting::get('tracking_start')) {
+            $query->where('work_date', '>=', $start);
+        }
+
+        return (int) $query->sum('balance_minutes');
     }
 
     // --- Filament --------------------------------------------------------

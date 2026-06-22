@@ -120,6 +120,10 @@ class WorkDayResource extends Resource
                 .'SUM(balance_minutes) as balance_minutes')
             ->groupByRaw('employee_id, substr(work_date, 1, 7)');
 
+        if ($start = \App\Models\Setting::get('tracking_start')) {
+            $query->where('work_date', '>=', $start);
+        }
+
         $user = auth()->user();
         if ($user && ! $user->canManagePeople()) {
             $query->where('employee_id', $user->id);
