@@ -83,6 +83,12 @@ class WorktimeService
         $expected = $this->expectedMinutes($employee, $date);
         $absence = $this->approvedAbsenceOn($employee, $date);
 
+        // Future days don't accrue expected time yet — otherwise every upcoming
+        // workday would show a -Soll deficit before it even happened.
+        if (Carbon::parse($date->toDateString())->isAfter(Carbon::today())) {
+            $expected = 0;
+        }
+
         $storedExpected = $expected;
         if ($absence && $absence->type === Absence::TYPE_UNPAID) {
             $storedExpected = 0;
