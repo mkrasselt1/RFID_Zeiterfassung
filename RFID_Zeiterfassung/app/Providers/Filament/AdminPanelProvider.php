@@ -41,6 +41,8 @@ class AdminPanelProvider extends PanelProvider
             ->widgets([
                 Widgets\AccountWidget::class,
                 \App\Filament\Widgets\MyStatsWidget::class,
+                \App\Filament\Widgets\OvertimeTrendWidget::class,
+                \App\Filament\Widgets\WorkBalanceChartWidget::class,
             ])
             ->navigationGroups([
                 'Zeiterfassung',

@@ -54,6 +54,47 @@
         </div>
     </x-filament::section>
 
+    {{-- Monatskalender: grün = Plus/Soll erfüllt, rot = Minus, blau = Abwesenheit, lila = Feiertag --}}
+    @php $absenceLabels = array_values(\App\Models\Absence::TYPES); @endphp
+    <x-filament::section>
+        <x-slot name="heading">Kalender {{ $r['period']->translatedFormat('F Y') }}</x-slot>
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">
+            @foreach(['Mo','Di','Mi','Do','Fr','Sa','So'] as $wd)
+                <div style="text-align:center;font-size:11px;color:#888;font-weight:600;">{{ $wd }}</div>
+            @endforeach
+            @foreach($r['weeks'] as $week)
+                @foreach($week['rows'] as $row)
+                    @php
+                        $bg = '#f3f4f6'; $fg = '#111'; $note = ''; $opacity = '1';
+                        if (! $row['in_month']) {
+                            $bg = '#fafafa'; $fg = '#bbb'; $opacity = '0.5';
+                        } elseif (in_array($row['hint'], $absenceLabels, true)) {
+                            $bg = '#dbeafe'; $note = $row['hint'];                 // Abwesenheit (blau)
+                        } elseif ($row['hint'] && $row['hint'] !== 'Wochenende') {
+                            $bg = '#ede9fe'; $note = 'Feiertag';                    // Feiertag (lila)
+                        } elseif ($row['weekend']) {
+                            $bg = '#f3f4f6';                                        // Wochenende (grau)
+                        } elseif ($row['soll'] > 0 || $row['ist'] > 0) {
+                            $bg = $row['saldo'] >= 0 ? '#dcfce7' : '#fee2e2';       // grün / rot
+                            $note = \App\Services\WorktimeReport::hhmm($row['saldo']);
+                        }
+                    @endphp
+                    <div style="background:{{ $bg }};color:{{ $fg }};opacity:{{ $opacity }};border-radius:6px;padding:6px 4px;min-height:46px;font-size:11px;">
+                        <div style="font-weight:700;">{{ (int) $row['day'] }}</div>
+                        <div style="opacity:.8;">{{ $note }}</div>
+                    </div>
+                @endforeach
+            @endforeach
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:#888;">
+            <span style="background:#dcfce7;padding:1px 6px;border-radius:4px;">Plus</span>
+            <span style="background:#fee2e2;padding:1px 6px;border-radius:4px;">Minus</span>
+            <span style="background:#dbeafe;padding:1px 6px;border-radius:4px;">Abwesenheit</span>
+            <span style="background:#ede9fe;padding:1px 6px;border-radius:4px;">Feiertag</span>
+            <span style="background:#f3f4f6;padding:1px 6px;border-radius:4px;">Wochenende/frei</span>
+        </div>
+    </x-filament::section>
+
     @foreach($r['weeks'] as $week)
         <x-filament::section>
             <x-slot name="heading">KW {{ $week['kw'] }}</x-slot>
