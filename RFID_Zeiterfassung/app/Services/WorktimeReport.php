@@ -124,15 +124,14 @@ class WorktimeReport
         ];
     }
 
-    /** Convert stored UTC date+time to the display timezone (HH:MM). */
+    /** Stored times are already in local time — show them as-is (HH:MM). */
     private function localTime(?string $date, ?string $time, string $tz): string
     {
         if (! $time || $time === '00:00:00') {
             return '';
         }
 
-        return Carbon::createFromFormat('Y-m-d H:i:s', $date.' '.$time, 'UTC')
-            ->setTimezone($tz)->format('H:i');
+        return substr((string) $time, 0, 5);
     }
 
     /** Format signed minutes as "8:00" / "-1:30". */

@@ -46,8 +46,8 @@ class CheckInOut extends Page
         if (! $user) {
             return null;
         }
-        $today = Carbon::now('UTC')->format('Y-m-d');
-        $yesterday = Carbon::yesterday('UTC')->format('Y-m-d');
+        $today = Carbon::now()->format('Y-m-d');
+        $yesterday = Carbon::yesterday()->format('Y-m-d');
 
         return UserLog::where('card_uid', $user->card_uid)
             ->whereIn('checkindate', [$today, $yesterday])
@@ -85,8 +85,8 @@ class CheckInOut extends Page
             'card_uid' => $user->card_uid,
             'device_uid' => 'Web',
             'device_dep' => 'Web',
-            'checkindate' => Carbon::now('UTC')->format('Y-m-d'),
-            'timein' => Carbon::now('UTC')->format('H:i:s'),
+            'checkindate' => Carbon::now()->format('Y-m-d'),
+            'timein' => Carbon::now()->format('H:i:s'),
             'timeout' => 0,
             'calendarEventId' => $eventId,
         ]);
@@ -119,7 +119,7 @@ class CheckInOut extends Page
             );
         }
 
-        $log->timeout = Carbon::now('UTC')->format('H:i:s');
+        $log->timeout = Carbon::now()->format('H:i:s');
         $log->card_out = 1;
         $log->save();
         $cAPI->persist();

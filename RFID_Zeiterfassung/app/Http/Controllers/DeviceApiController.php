@@ -33,8 +33,8 @@ class DeviceApiController extends Controller
         $cAPI = GoogleCalendarApi::make();
         $timezone = Setting::get('timezone', 'Europe/Berlin');
 
-        $d = Carbon::now('UTC')->format('Y-m-d');
-        $t = Carbon::now('UTC')->format('H:i:s');
+        $d = Carbon::now()->format('Y-m-d');
+        $t = Carbon::now()->format('H:i:s');
 
         // Validate inputs exactly like the legacy filter_input regexes.
         $device_uid = $this->validateHex($request->query('device_token'), '/\A[[:xdigit:]]{16}\z/');
@@ -174,7 +174,7 @@ class DeviceApiController extends Controller
             return $log;
         }
 
-        $yesterday = Carbon::yesterday('UTC')->format('Y-m-d');
+        $yesterday = Carbon::yesterday()->format('Y-m-d');
 
         return UserLog::where('card_uid', $card_uid)
             ->where('checkindate', $yesterday)

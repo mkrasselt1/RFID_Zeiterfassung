@@ -122,16 +122,14 @@ class UserLogResource extends Resource
         return Setting::get('timezone', 'Europe/Berlin');
     }
 
-    /** Convert a stored UTC date+time to the configured display timezone. */
+    /** Stored times are already in local time — show them as-is (no conversion). */
     protected static function localTime(?string $date, ?string $time, string $tz): string
     {
-        if (! $time) {
+        if (! $time || $time === '00:00:00') {
             return '';
         }
 
-        return Carbon::createFromFormat('Y-m-d H:i:s', $date . ' ' . $time, 'UTC')
-            ->setTimezone($tz)
-            ->format('H:i:s');
+        return substr((string) $time, 0, 8);
     }
 
     /** Worked duration (timeout - timein), blank while still checked in. */
