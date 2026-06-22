@@ -55,7 +55,12 @@ class EmployeeResource extends Resource
             Forms\Components\Section::make('Details')->schema([
                 Forms\Components\TextInput::make('personnel_number')->label('Personalnummer'),
                 Forms\Components\Select::make('supervisor_id')->label('Vorgesetzter')
-                    ->relationship('supervisor', 'name')->searchable()->preload(),
+                    ->options(fn (?Employee $record) => Employee::query()
+                        ->whereIn('role', [Employee::ROLE_SUPERVISOR, Employee::ROLE_HR, Employee::ROLE_ADMIN])
+                        ->when($record, fn ($q) => $q->whereKeyNot($record->getKey()))
+                        ->orderBy('name')->pluck('name', 'id'))
+                    ->searchable()
+                    ->helperText('Nur Vorgesetzte, Personal oder Admins wählbar.'),
                 Forms\Components\Select::make('gender')->label('Geschlecht')
                     ->options(['Male' => 'Männlich', 'Female' => 'Weiblich', 'None' => 'Keine Angabe']),
                 Forms\Components\TextInput::make('calendar_id')->label('Google Kalender-ID'),
