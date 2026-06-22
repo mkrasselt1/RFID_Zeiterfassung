@@ -2,8 +2,8 @@
 
 namespace App\Filament\Resources;
 
+use App\Filament\Pages\WorktimeReportPage;
 use App\Filament\Resources\WorkDayResource\Pages;
-use App\Models\Absence;
 use App\Models\Employee;
 use App\Models\WorkDay;
 use App\Services\WorktimeService;
@@ -13,7 +13,6 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Columns\Summarizers\Sum;
-use Filament\Tables\Grouping\Group;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -28,7 +27,7 @@ class WorkDayResource extends Resource
 
     protected static ?string $navigationLabel = 'Arbeitszeitkonto';
 
-    protected static ?string $modelLabel = 'Tagesbilanz';
+    protected static ?string $modelLabel = 'Monatsbilanz';
 
     protected static ?string $pluralModelLabel = 'Arbeitszeitkonto';
 
@@ -45,41 +44,33 @@ class WorkDayResource extends Resource
 
     public static function table(Table $table): Table
     {
+        $isManager = fn () => auth()->user()?->canManagePeople() ?? false;
+
         return $table
-            ->defaultSort('work_date', 'desc')
-            ->defaultGroup('work_date')
-            ->groups([
-                Group::make('work_date')
-                    ->label('Monat')
-                    ->getKeyFromRecordUsing(fn (WorkDay $r) => substr((string) $r->work_date, 0, 7))
-                    ->getTitleFromRecordUsing(fn (WorkDay $r) => Carbon::parse($r->work_date)->translatedFormat('F Y'))
-                    ->orderQueryUsing(fn (Builder $q, string $direction) => $q->orderBy('work_date', $direction)),
-            ])
+            ->defaultSort('period', 'desc')
             ->columns([
+                Tables\Columns\TextColumn::make('period')->label('Monat')->sortable()
+                    ->formatStateUsing(fn (?string $state) => $state
+                        ? Carbon::createFromFormat('Y-m', $state)->translatedFormat('F Y') : ''),
                 Tables\Columns\TextColumn::make('employee.name')->label('Mitarbeiter')
-                    ->searchable()->sortable()
-                    ->visible(fn () => auth()->user()?->canManagePeople() ?? false),
-                Tables\Columns\TextColumn::make('work_date')->label('Datum')->date('d.m.Y')->sortable(),
+                    ->visible($isManager),
                 Tables\Columns\TextColumn::make('worked_minutes')->label('Ist')
                     ->formatStateUsing(fn (int $state) => static::hhmm($state))
-                    ->summarize(Sum::make()->label('Ist')->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
+                    ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
                 Tables\Columns\TextColumn::make('expected_minutes')->label('Soll')
                     ->formatStateUsing(fn (int $state) => static::hhmm($state))
-                    ->summarize(Sum::make()->label('Soll')->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
+                    ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
                 Tables\Columns\TextColumn::make('balance_minutes')->label('Saldo')
                     ->formatStateUsing(fn (int $state) => static::hhmm($state))
                     ->color(fn (int $state) => $state < 0 ? 'danger' : ($state > 0 ? 'success' : 'gray'))
                     ->weight('bold')
-                    ->summarize(Sum::make()->label('Saldo')->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
-                Tables\Columns\TextColumn::make('absence.type')->label('Abwesenheit')
-                    ->formatStateUsing(fn (?string $state) => $state ? (Absence::TYPES[$state] ?? $state) : '')
-                    ->placeholder('-'),
+                    ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('employee_id')->label('Mitarbeiter')
                     ->options(fn () => Employee::orderBy('name')->pluck('name', 'id'))
                     ->searchable()
-                    ->visible(fn () => auth()->user()?->canManagePeople() ?? false),
+                    ->visible($isManager),
                 Tables\Filters\Filter::make('range')
                     ->form([
                         Forms\Components\DatePicker::make('from')->label('Von'),
@@ -89,6 +80,13 @@ class WorkDayResource extends Resource
                         ->when($data['from'], fn (Builder $q, $d) => $q->whereDate('work_date', '>=', $d))
                         ->when($data['until'], fn (Builder $q, $d) => $q->whereDate('work_date', '<=', $d))),
             ])
+            ->actions([
+                Tables\Actions\Action::make('details')
+                    ->label('Details')
+                    ->icon('heroicon-o-magnifying-glass')
+                    ->url(fn (WorkDay $record) => WorktimeReportPage::getUrl()
+                        .'?employee='.$record->employee_id.'&period='.$record->period),
+            ])
             ->headerActions([
                 Tables\Actions\Action::make('exportCsv')
                     ->label('CSV Export')
@@ -97,7 +95,7 @@ class WorkDayResource extends Resource
                 Tables\Actions\Action::make('recalc')
                     ->label('Neu berechnen')
                     ->icon('heroicon-o-arrow-path')
-                    ->visible(fn () => auth()->user()?->canManagePeople() ?? false)
+                    ->visible($isManager)
                     ->form([
                         Forms\Components\DatePicker::make('from')->label('Von')->default(now()->startOfMonth())->required(),
                         Forms\Components\DatePicker::make('to')->label('Bis')->default(now())->required(),
@@ -112,40 +110,44 @@ class WorkDayResource extends Resource
             ]);
     }
 
-    /** CSV of the current (filtered) ledger view, per day with a month column. */
-    protected static function exportCsv(Builder $query): StreamedResponse
-    {
-        $filename = 'arbeitszeitkonto-'.now()->format('Y-m-d_His').'.csv';
-
-        return response()->streamDownload(function () use ($query) {
-            $out = fopen('php://output', 'w');
-            fputcsv($out, ['Monat', 'Datum', 'Mitarbeiter', 'Ist', 'Soll', 'Saldo', 'Abwesenheit']);
-            $query->with('employee', 'absence')->orderBy('work_date')->chunk(500, function ($rows) use ($out) {
-                foreach ($rows as $r) {
-                    fputcsv($out, [
-                        substr((string) $r->work_date, 0, 7),
-                        $r->work_date,
-                        $r->employee?->name,
-                        static::hhmm((int) $r->worked_minutes),
-                        static::hhmm((int) $r->expected_minutes),
-                        static::hhmm((int) $r->balance_minutes),
-                        $r->absence ? (Absence::TYPES[$r->absence->type] ?? $r->absence->type) : '',
-                    ]);
-                }
-            });
-            fclose($out);
-        }, $filename, ['Content-Type' => 'text/csv']);
-    }
-
+    /** Monthly aggregate per employee: one row per (employee, month). */
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery();
+        $query = parent::getEloquentQuery()
+            ->selectRaw('MIN(id) as id, employee_id, substr(work_date, 1, 7) as period, '
+                .'SUM(worked_minutes) as worked_minutes, '
+                .'SUM(expected_minutes) as expected_minutes, '
+                .'SUM(balance_minutes) as balance_minutes')
+            ->groupByRaw('employee_id, substr(work_date, 1, 7)');
+
         $user = auth()->user();
         if ($user && ! $user->canManagePeople()) {
             $query->where('employee_id', $user->id);
         }
 
         return $query;
+    }
+
+    /** CSV of the current (filtered) monthly view. */
+    protected static function exportCsv(Builder $query): StreamedResponse
+    {
+        $filename = 'arbeitszeitkonto-'.now()->format('Y-m-d_His').'.csv';
+        $rows = $query->with('employee')->get();
+
+        return response()->streamDownload(function () use ($rows) {
+            $out = fopen('php://output', 'w');
+            fputcsv($out, ['Monat', 'Mitarbeiter', 'Ist', 'Soll', 'Saldo']);
+            foreach ($rows as $r) {
+                fputcsv($out, [
+                    $r->period,
+                    $r->employee?->name,
+                    static::hhmm((int) $r->worked_minutes),
+                    static::hhmm((int) $r->expected_minutes),
+                    static::hhmm((int) $r->balance_minutes),
+                ]);
+            }
+            fclose($out);
+        }, $filename, ['Content-Type' => 'text/csv']);
     }
 
     public static function canCreate(): bool

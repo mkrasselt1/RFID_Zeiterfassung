@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Models\Employee;
 use App\Services\WorktimeReport;
+use Carbon\Carbon;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Concerns\InteractsWithForms;
@@ -46,11 +47,25 @@ class WorktimeReportPage extends Page implements HasForms
 
     public function mount(): void
     {
+        // Allow deep-linking from the Arbeitszeitkonto: ?employee=&period=
+        $employeeId = (int) (request()->query('employee') ?: auth()->id());
+        if (! (auth()->user()?->canManagePeople() ?? false)) {
+            $employeeId = (int) auth()->id();
+        }
+        $period = request()->query('period');
+        if (! is_string($period) || ! preg_match('/^\d{4}-\d{2}$/', $period)) {
+            $period = now()->format('Y-m');
+        }
+        $this->requestedPeriod = $period;
+
         $this->form->fill([
-            'employee_id' => auth()->id(),
-            'period' => now()->format('Y-m'),
+            'employee_id' => $employeeId,
+            'period' => $period,
         ]);
     }
+
+    /** A period passed via URL that may lie outside the default 18-month list. */
+    public ?string $requestedPeriod = null;
 
     public function form(Form $form): Form
     {
@@ -76,6 +91,12 @@ class WorktimeReportPage extends Page implements HasForms
         for ($i = 0; $i < 18; $i++) {
             $options[$cursor->format('Y-m')] = $cursor->translatedFormat('F Y');
             $cursor->subMonth();
+        }
+
+        // Ensure a deep-linked period stays selectable even if older than 18 months.
+        if ($this->requestedPeriod && ! isset($options[$this->requestedPeriod])) {
+            $options[$this->requestedPeriod] = Carbon::createFromFormat('Y-m', $this->requestedPeriod)
+                ->translatedFormat('F Y');
         }
 
         return $options;
