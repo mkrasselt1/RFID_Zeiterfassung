@@ -19,7 +19,7 @@ use Carbon\CarbonInterface;
  *
  * Balance rules per day:
  *   no absence            -> balance = worked - expected
- *   vacation / sick       -> credited the expected hours -> balance = worked
+ *   vacation / special / sick -> credited the expected hours -> balance = worked
  *   unpaid                -> not owed -> expected 0, balance = worked
  *   overtime_reduction    -> drawn from overtime -> balance = worked - expected
  */
@@ -115,6 +115,7 @@ class WorktimeService
             $balance = match (true) {
                 $absence === null => $worked - $expected,
                 $absence->type === Absence::TYPE_VACATION,
+                $absence->type === Absence::TYPE_SPECIAL,
                 $absence->type === Absence::TYPE_SICK => $worked,
                 $absence->type === Absence::TYPE_UNPAID => $worked,
                 $absence->type === Absence::TYPE_OVERTIME => $worked - $expected,

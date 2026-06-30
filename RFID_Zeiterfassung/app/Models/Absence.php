@@ -13,12 +13,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Absence extends Model
 {
     public const TYPE_VACATION = 'vacation';
+    public const TYPE_SPECIAL = 'special';
     public const TYPE_SICK = 'sick';
     public const TYPE_UNPAID = 'unpaid';
     public const TYPE_OVERTIME = 'overtime_reduction';
 
     public const TYPES = [
         self::TYPE_VACATION => 'Urlaub',
+        self::TYPE_SPECIAL => 'Sonderurlaub',
         self::TYPE_SICK => 'Krank',
         self::TYPE_UNPAID => 'Unbezahlt frei',
         self::TYPE_OVERTIME => 'Überstundenabbau',

@@ -122,6 +122,17 @@ class Employee extends Authenticatable implements FilamentUser, HasName
         return $entitlement - $taken;
     }
 
+    /** Approved special-leave days taken in a year (does not draw from vacation). */
+    public function specialLeaveTaken(int $year): float
+    {
+        return $this->absences()
+            ->approved()
+            ->where('type', Absence::TYPE_SPECIAL)
+            ->whereYear('start_date', $year)
+            ->get()
+            ->sum(fn (Absence $a) => $a->dayCount());
+    }
+
     /** Net overtime in minutes across the ledger (from the go-live cut-off, if set). */
     public function overtimeBalanceMinutes(): int
     {

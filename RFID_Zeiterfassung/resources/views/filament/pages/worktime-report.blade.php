@@ -27,6 +27,10 @@
                 <div class="text-xl font-bold">{{ number_format($r['vacation_left'], 1, ',', '.') }} T</div>
             </div>
             <div>
+                <div class="text-sm text-gray-500">Sonderurlaub {{ $r['period']->year }}</div>
+                <div class="text-xl font-bold">{{ number_format($r['special_taken'], 1, ',', '.') }} T</div>
+            </div>
+            <div>
                 <div class="text-sm text-gray-500">Übertrag (Vorjahre)</div>
                 <div @class(['text-xl font-bold', $balanceClass($r['carryover'])])>
                     {{ R::hhmm($r['carryover']) }}</div>

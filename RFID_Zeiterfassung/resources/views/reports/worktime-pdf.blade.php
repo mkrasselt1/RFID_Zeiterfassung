@@ -47,7 +47,7 @@
             <td><div class="label">Übertrag (Vorjahre)</div><div class="val {{ $r['carryover'] < 0 ? 'neg' : ($r['carryover'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['carryover']) }}</div></td>
             <td><div class="label">Saldo {{ $r['period']->year }}</div><div class="val {{ $r['year_balance'] < 0 ? 'neg' : ($r['year_balance'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['year_balance']) }}</div></td>
             <td><div class="label">Saldo gesamt</div><div class="val {{ $r['total_balance'] < 0 ? 'neg' : ($r['total_balance'] > 0 ? 'pos' : '') }}">{{ R::hhmm($r['total_balance']) }}</div></td>
-            <td></td>
+            <td><div class="label">Sonderurlaub {{ $r['period']->year }}</div><div class="val">{{ number_format($r['special_taken'], 1, ',', '.') }} T</div></td>
         </tr>
     </table>
 
