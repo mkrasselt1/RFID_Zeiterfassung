@@ -2,6 +2,10 @@
 
 namespace App\Filament\Resources\EmployeeResource\RelationManagers;
 
+use App\Models\Cardholder;
+use App\Models\UserLog;
+use App\Services\WorktimeService;
+use Carbon\Carbon;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -42,6 +46,7 @@ class CardsRelationManager extends RelationManager
             ])
             ->headerActions([
                 Tables\Actions\CreateAction::make()
+                    ->label('Karte hinzufügen / übernehmen')
                     ->mutateFormDataUsing(function (array $data): array {
                         // Normalize to the firmware UID format and fill legacy defaults.
                         $data['card_uid'] = strtoupper(preg_replace('/[^0-9a-fA-F]/', '', $data['card_uid'] ?? ''));
@@ -52,6 +57,33 @@ class CardsRelationManager extends RelationManager
                         $data['device_uid'] = $data['device_uid'] ?? 'Web';
 
                         return $data;
+                    })
+                    // A physical chip is a single `users` row (card_uid is unique). If it
+                    // already exists (enrolled, or held by a previous employee), take it
+                    // over by re-pointing employee_id instead of inserting a duplicate.
+                    ->using(function (array $data): Cardholder {
+                        $employee = $this->getOwnerRecord();
+
+                        $card = Cardholder::updateOrCreate(
+                            ['card_uid' => $data['card_uid']],
+                            $data + ['employee_id' => $employee->getKey()],
+                        );
+
+                        // Claim this card's not-yet-attributed stampings — e.g. legacy
+                        // logs from before this employee record existed — and rebuild the
+                        // affected ledger days. Only NULL-owner logs are touched, so a
+                        // previous holder's already-attributed history is never moved.
+                        $orphan = UserLog::where('card_uid', $card->card_uid)->whereNull('employee_id');
+                        $dates = (clone $orphan)->distinct()->pluck('checkindate');
+                        if ($dates->isNotEmpty()) {
+                            $orphan->update(['employee_id' => $employee->getKey()]);
+                            $service = app(WorktimeService::class);
+                            foreach ($dates as $d) {
+                                $service->recalculateDay($employee, Carbon::parse(substr((string) $d, 0, 10)));
+                            }
+                        }
+
+                        return $card;
                     }),
             ])
             ->actions([
