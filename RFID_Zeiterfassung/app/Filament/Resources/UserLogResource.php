@@ -65,8 +65,9 @@ class UserLogResource extends Resource
             ->defaultSort('id', 'desc')
             ->columns([
                 Tables\Columns\TextColumn::make('id')->label('ID')->sortable(),
-                Tables\Columns\TextColumn::make('username')->label('Name')->searchable()->sortable(),
-                Tables\Columns\TextColumn::make('serialnumber')->label('Pers.-Nr.'),
+                Tables\Columns\TextColumn::make('employee.name')->label('Name')
+                    ->placeholder('—')->searchable()->sortable(),
+                Tables\Columns\TextColumn::make('employee.personnel_number')->label('Pers.-Nr.')->placeholder('—'),
                 Tables\Columns\TextColumn::make('card_uid')->label('Karten-UID')->fontFamily('mono')->toggleable(),
                 Tables\Columns\TextColumn::make('device_dep')->label('Abteilung')->searchable(),
                 Tables\Columns\TextColumn::make('checkindate')->label('Datum')->date('d.m.Y')->sortable(),
@@ -108,7 +109,7 @@ class UserLogResource extends Resource
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make()
                     ->after(fn (UserLog $record) => app(WorktimeService::class)
-                        ->recalculateForCardDate($record->card_uid, $record->checkindate)),
+                        ->recalculateForLog($record)),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
@@ -152,10 +153,10 @@ class UserLogResource extends Resource
         return response()->streamDownload(function () use ($query, $tz) {
             $out = fopen('php://output', 'w');
             fputcsv($out, ['ID', 'Name', 'Pers.-Nr.', 'Karten-UID', 'Abteilung', 'Datum', 'Rein', 'Raus', 'Zeit']);
-            $query->orderBy('id', 'desc')->chunk(500, function ($rows) use ($out, $tz) {
+            $query->with('employee')->orderBy('id', 'desc')->chunk(500, function ($rows) use ($out, $tz) {
                 foreach ($rows as $r) {
                     fputcsv($out, [
-                        $r->id, $r->username, $r->serialnumber, $r->card_uid, $r->device_dep,
+                        $r->id, $r->employee?->name ?? '', $r->employee?->personnel_number ?? '', $r->card_uid, $r->device_dep,
                         $r->checkindate,
                         static::localTime($r->checkindate, $r->timein, $tz),
                         $r->card_out ? static::localTime($r->checkindate, $r->timeout, $tz) : '',

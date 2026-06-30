@@ -186,8 +186,7 @@ class DemoSeeder extends Seeder
                 $out = $in->copy()->addMinutes($worked);
 
                 UserLog::create([
-                    'username' => $employee->name,
-                    'serialnumber' => (float) ($employee->personnel_number ?? 0),
+                    'employee_id' => $employee->id,
                     'card_uid' => $card->card_uid,
                     'device_uid' => $card->device_uid,
                     'device_dep' => $card->device_dep,

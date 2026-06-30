@@ -11,12 +11,11 @@ class CreateUserLog extends CreateRecord
 {
     protected static string $resource = UserLogResource::class;
 
-    /** Fill the legacy denormalized fields from the chosen card. */
+    /** Derive owner + device fields from the chosen card. */
     protected function mutateFormDataBeforeCreate(array $data): array
     {
         $card = Cardholder::where('card_uid', $data['card_uid'] ?? '')->first();
-        $data['username'] = $card?->username ?? 'Korrektur';
-        $data['serialnumber'] = $card?->serialnumber ?? 0;
+        $data['employee_id'] = $card?->employee_id;
         $data['device_uid'] = $card?->device_uid ?? 'Korrektur';
         $data['device_dep'] = $card?->device_dep ?? 'Korrektur';
         $data['timeout'] = $data['timeout'] ?? 0;
@@ -27,9 +26,6 @@ class CreateUserLog extends CreateRecord
 
     protected function afterCreate(): void
     {
-        app(WorktimeService::class)->recalculateForCardDate(
-            $this->record->card_uid,
-            $this->record->checkindate,
-        );
+        app(WorktimeService::class)->recalculateForLog($this->record);
     }
 }

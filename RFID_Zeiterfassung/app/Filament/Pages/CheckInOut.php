@@ -80,8 +80,7 @@ class CheckInOut extends Page
         }
 
         UserLog::create([
-            'username' => $user->username,
-            'serialnumber' => $user->serialnumber,
+            'employee_id' => $user->employee_id,
             'card_uid' => $user->card_uid,
             'device_uid' => 'Web',
             'device_dep' => 'Web',

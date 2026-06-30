@@ -118,8 +118,7 @@ class DeviceApiController extends Controller
         }
 
         $log = new UserLog([
-            'username' => $user->username,
-            'serialnumber' => $user->serialnumber,
+            'employee_id' => $user->employee_id,
             'card_uid' => $user->card_uid,
             'device_uid' => $device->device_uid,
             'device_dep' => $device->device_dep,

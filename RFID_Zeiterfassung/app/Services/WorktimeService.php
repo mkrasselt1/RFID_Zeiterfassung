@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\Absence;
-use App\Models\Cardholder;
 use App\Models\Employee;
 use App\Models\Setting;
 use App\Models\UserLog;
@@ -25,15 +24,12 @@ use Carbon\CarbonInterface;
  */
 class WorktimeService
 {
-    /** Worked minutes for all of the employee's cards on a date (completed logs). */
+    /** Worked minutes the employee delivered on a date (completed logs).
+     *  Attributed by the `employee_id` stamped on each record at check-in, so a
+     *  later chip reassignment never moves historical time between accounts. */
     public function workedMinutes(Employee $employee, CarbonInterface $date): int
     {
-        $cardUids = $employee->cards()->pluck('card_uid');
-        if ($cardUids->isEmpty()) {
-            return 0;
-        }
-
-        $logs = UserLog::whereIn('card_uid', $cardUids)
+        $logs = UserLog::where('employee_id', $employee->id)
             ->where('checkindate', $date->toDateString())
             ->where('card_out', 1)
             ->get();
@@ -163,18 +159,18 @@ class WorktimeService
     }
 
     /**
-     * Recompute the ledger for the employee owning a card, on a given date.
-     * Used after an admin corrects a raw stamping. No-op for unlinked cards.
+     * Recompute the ledger for the employee a (manually edited) stamping belongs
+     * to, on its date. Attribution follows the log's stamped `employee_id`, not
+     * the card's current holder. No-op for logs not linked to an employee.
      */
-    public function recalculateForCardDate(string $cardUid, ?string $date): void
+    public function recalculateForLog(UserLog $log): void
     {
-        if (! $date) {
+        if (! $log->employee_id || ! $log->checkindate) {
             return;
         }
-        $employeeId = Cardholder::where('card_uid', $cardUid)->value('employee_id');
-        $employee = $employeeId ? Employee::find($employeeId) : null;
+        $employee = Employee::find($log->employee_id);
         if ($employee) {
-            $this->recalculateDay($employee, Carbon::parse(substr((string) $date, 0, 10)));
+            $this->recalculateDay($employee, Carbon::parse(substr((string) $log->checkindate, 0, 10)));
         }
     }
 }

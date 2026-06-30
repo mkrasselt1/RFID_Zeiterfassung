@@ -151,7 +151,7 @@ class PanelSmokeTest extends TestCase
 
         // A worked Monday: 08:00–16:30 = 510 minutes (+30 over the 480 target).
         UserLog::create([
-            'username' => $employee->name, 'serialnumber' => 0, 'card_uid' => 'AABBCCDD',
+            'employee_id' => $employee->id, 'card_uid' => 'AABBCCDD',
             'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
             'timein' => '08:00:00', 'timeout' => '16:30:00', 'card_out' => 1,
         ]);
@@ -173,6 +173,41 @@ class PanelSmokeTest extends TestCase
         $this->assertNotNull($vac->absence_id);
     }
 
+    public function test_chip_reassignment_keeps_history_with_original_employee(): void
+    {
+        $service = app(WorktimeService::class);
+
+        $alice = $this->makeEmployee(Employee::ROLE_EMPLOYEE, 'alice@example.de');
+        $bob = $this->makeEmployee(Employee::ROLE_EMPLOYEE, 'bob@example.de');
+
+        // One physical card, now (currently) held by Bob after a handover.
+        $bob->cards()->create([
+            'card_uid' => 'CAFE0001', 'username' => $bob->name, 'add_card' => 1,
+            'device_dep' => 'Buero', 'user_date' => '2024-01-01',
+        ]);
+
+        // A stamping from Alice's era (stamped to her at check-in: 8h) ...
+        UserLog::create([
+            'employee_id' => $alice->id, 'card_uid' => 'CAFE0001',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2022-05-10',
+            'timein' => '08:00:00', 'timeout' => '16:00:00', 'card_out' => 1,
+        ]);
+        // ... and one from Bob's era on the same physical card (4h).
+        UserLog::create([
+            'employee_id' => $bob->id, 'card_uid' => 'CAFE0001',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2024-05-10',
+            'timein' => '08:00:00', 'timeout' => '12:00:00', 'card_out' => 1,
+        ]);
+
+        // Alice keeps her old day; Bob does NOT inherit it despite now holding the card.
+        $this->assertSame(480, $service->workedMinutes($alice, Carbon::parse('2022-05-10')));
+        $this->assertSame(0, $service->workedMinutes($bob, Carbon::parse('2022-05-10')));
+
+        // Bob's own day stays his; Alice has nothing there.
+        $this->assertSame(240, $service->workedMinutes($bob, Carbon::parse('2024-05-10')));
+        $this->assertSame(0, $service->workedMinutes($alice, Carbon::parse('2024-05-10')));
+    }
+
     public function test_days_without_contract_build_no_balance(): void
     {
         $employee = $this->makeEmployee(); // no contract
@@ -181,7 +216,7 @@ class PanelSmokeTest extends TestCase
             'device_dep' => 'Buero', 'user_date' => '2026-06-01',
         ]);
         UserLog::create([
-            'username' => $employee->name, 'serialnumber' => 0, 'card_uid' => 'CC11DD22',
+            'employee_id' => $employee->id, 'card_uid' => 'CC11DD22',
             'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
             'timein' => '08:00:00', 'timeout' => '16:00:00', 'card_out' => 1,
         ]);

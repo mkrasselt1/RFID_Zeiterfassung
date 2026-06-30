@@ -37,7 +37,7 @@ class DiagnoseWorktime extends Command
         $this->info("Mitarbeiter: {$employee->name} (#{$employee->id}, Rolle {$employee->role})");
 
         $uids = $employee->cards()->pluck('card_uid');
-        $this->line('Karten: '.$uids->count().' ['.$uids->implode(', ').']');
+        $this->line('Karten (aktuell zugeordnet): '.$uids->count().' ['.$uids->implode(', ').']');
 
         $c = $employee->activeContractOn($start->copy()->addDays(14));
         $this->line('Vertrag (Monatsmitte): '.($c
@@ -45,7 +45,7 @@ class DiagnoseWorktime extends Command
               .'gültig '.$c->valid_from->toDateString().'..'.($c->valid_to?->toDateString() ?? 'offen')
             : 'KEINER  ← dann ist Soll immer 0'));
 
-        $logs = UserLog::whereIn('card_uid', $uids)
+        $logs = UserLog::where('employee_id', $employee->id)
             ->whereBetween('checkindate', [$start->toDateString(), $end->toDateString()])->get();
         $this->line('Stempelungen im Monat: '.$logs->count()
             .' (abgeschlossen '.$logs->where('card_out', 1)->count()

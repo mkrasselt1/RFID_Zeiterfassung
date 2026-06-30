@@ -36,14 +36,14 @@ class WorktimeReport
         $this->worktime->recalculateRange($employee, $displayStart, $displayEnd);
 
         $tz = Setting::get('timezone', 'Europe/Berlin');
-        $cardUids = $employee->cards()->pluck('card_uid')->all();
 
         $ledger = WorkDay::where('employee_id', $employee->id)
             ->whereBetween('work_date', [$displayStart->toDateString(), $displayEnd->toDateString()])
             ->with('absence')
             ->get()->keyBy(fn (WorkDay $w) => substr((string) $w->work_date, 0, 10));
 
-        $logsByDate = UserLog::whereIn('card_uid', $cardUids)
+        // Displayed in/out times follow the same stamped attribution as the ledger.
+        $logsByDate = UserLog::where('employee_id', $employee->id)
             ->whereBetween('checkindate', [$displayStart->toDateString(), $displayEnd->toDateString()])
             ->get()->groupBy(fn (UserLog $l) => substr((string) $l->checkindate, 0, 10));
 

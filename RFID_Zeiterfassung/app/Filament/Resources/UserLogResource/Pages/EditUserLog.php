@@ -27,9 +27,6 @@ class EditUserLog extends EditRecord
     /** Rebuild the ledger day affected by the corrected stamping. */
     private function recalc(): void
     {
-        app(WorktimeService::class)->recalculateForCardDate(
-            $this->record->card_uid,
-            $this->record->checkindate,
-        );
+        app(WorktimeService::class)->recalculateForLog($this->record);
     }
 }
