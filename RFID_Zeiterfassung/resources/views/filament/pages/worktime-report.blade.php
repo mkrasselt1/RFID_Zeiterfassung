@@ -4,57 +4,47 @@
 
     @php $r = $this->getReport(); @endphp
 
+    {{-- Kennzahlen als Kachelreihe. Bewusst mit Inline-`style` statt Tailwind-
+         Utilities: Filaments kompiliertes CSS enthält `grid-cols-*` & Co. nicht,
+         solange kein eigenes Theme gebaut ist — die Klassen wären wirkungslos und
+         alles fiele untereinander. Farben sind hell/dunkel-invariant gewählt
+         (neutrale Rahmen über rgba, Text erbt die Panel-Farbe). --}}
     <x-filament::section>
         @php
-            $balanceClass = fn (int $v) => $v < 0 ? 'text-danger-600' : ($v > 0 ? 'text-success-600' : '');
+            // Vorzeichen trägt die Richtung, die Farbe verstärkt sie nur —
+            // ein Saldo ist nie allein über Farbe lesbar.
+            $saldo = fn (int $v) => [
+                'value' => R::hhmm($v),
+                'color' => $v < 0 ? '#d03b3b' : ($v > 0 ? '#0ca30c' : ''),
+            ];
+            $absences = collect($r['absence_days'])
+                ->map(fn ($days, $type) => (\App\Models\Absence::TYPES[$type] ?? $type).': '.$days)
+                ->implode(' · ');
+
+            $tiles = [
+                ['label' => 'Soll (Monat)', 'value' => R::hhmm($r['month_sum']['soll'])],
+                ['label' => 'Ist (Monat)', 'value' => R::hhmm($r['month_sum']['ist'])],
+                ['label' => 'Pause (Monat)', 'value' => R::hhmm($r['month_sum']['pause'])],
+                ['label' => 'Saldo Monat'] + $saldo($r['month_sum']['saldo']),
+                ['label' => 'Übertrag (Vorjahre)'] + $saldo($r['carryover']),
+                ['label' => 'Saldo '.$r['period']->year] + $saldo($r['year_balance']),
+                ['label' => 'Saldo gesamt'] + $saldo($r['total_balance']),
+                ['label' => 'Resturlaub', 'value' => number_format($r['vacation_left'], 1, ',', '.').' T'],
+                ['label' => 'Sonderurlaub '.$r['period']->year,
+                    'value' => number_format($r['special_taken'], 1, ',', '.').' T'],
+                ['label' => 'Abwesenheit', 'value' => $absences ?: '–', 'small' => true],
+            ];
         @endphp
-        <div class="grid grid-cols-2 gap-4 md:grid-cols-4 text-center">
-            <div>
-                <div class="text-sm text-gray-500">Soll (Monat)</div>
-                <div class="text-xl font-bold">{{ R::hhmm($r['month_sum']['soll']) }}</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Ist (Monat)</div>
-                <div class="text-xl font-bold">{{ R::hhmm($r['month_sum']['ist']) }}</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Saldo Monat</div>
-                <div @class(['text-xl font-bold', $balanceClass($r['month_sum']['saldo'])])>
-                    {{ R::hhmm($r['month_sum']['saldo']) }}</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Resturlaub</div>
-                <div class="text-xl font-bold">{{ number_format($r['vacation_left'], 1, ',', '.') }} T</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Sonderurlaub {{ $r['period']->year }}</div>
-                <div class="text-xl font-bold">{{ number_format($r['special_taken'], 1, ',', '.') }} T</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Übertrag (Vorjahre)</div>
-                <div @class(['text-xl font-bold', $balanceClass($r['carryover'])])>
-                    {{ R::hhmm($r['carryover']) }}</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Saldo {{ $r['period']->year }}</div>
-                <div @class(['text-xl font-bold', $balanceClass($r['year_balance'])])>
-                    {{ R::hhmm($r['year_balance']) }}</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Saldo gesamt</div>
-                <div @class(['text-xl font-bold', $balanceClass($r['total_balance'])])>
-                    {{ R::hhmm($r['total_balance']) }}</div>
-            </div>
-            <div>
-                <div class="text-sm text-gray-500">Abwesenheit</div>
-                <div class="text-sm font-medium">
-                    @forelse($r['absence_days'] as $type => $days)
-                        {{ \App\Models\Absence::TYPES[$type] ?? $type }}: {{ $days }}<br>
-                    @empty
-                        –
-                    @endforelse
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">
+            @foreach($tiles as $tile)
+                <div style="border:1px solid rgba(127,127,127,.28);border-radius:8px;
+                            padding:10px 12px;background:rgba(127,127,127,.06);">
+                    <div style="font-size:11px;opacity:.65;line-height:1.3;">{{ $tile['label'] }}</div>
+                    <div style="font-weight:600;margin-top:3px;line-height:1.25;font-size:{{ ($tile['small'] ?? false) ? '13px' : '20px' }};{{ ($tile['color'] ?? '') ? 'color:'.$tile['color'].';' : '' }}">
+                        {{ $tile['value'] }}
+                    </div>
                 </div>
-            </div>
+            @endforeach
         </div>
     </x-filament::section>
 
