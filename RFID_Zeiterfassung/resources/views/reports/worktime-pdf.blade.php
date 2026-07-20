@@ -69,7 +69,7 @@
                         <td class="r">{{ $row['pause'] ? R::hhmm($row['pause']) : '' }}</td>
                         <td class="r">{{ $row['ist'] ? R::hhmm($row['ist']) : '' }}</td>
                         <td class="r">{{ $row['soll'] ? R::hhmm($row['soll']) : '' }}</td>
-                        <td class="r {{ $row['saldo'] < 0 ? 'neg' : ($row['saldo'] > 0 ? 'pos' : '') }}">{{ ($row['ist'] || $row['soll']) ? R::hhmm($row['saldo']) : '' }}</td>
+                        <td class="r {{ $row['saldo'] < 0 ? 'neg' : ($row['saldo'] > 0 ? 'pos' : '') }}">{{ ($row['ist'] || $row['soll']) ? R::hhmm($row['saldo']) : '' }}{{ $row['toleriert'] ? '°' : '' }}</td>
                         <td>{{ $row['hint'] }}</td>
                     </tr>
                 @endforeach
@@ -88,6 +88,7 @@
     <div class="sub">
         * mehrere Stempelungen an diesem Tag. „Pause" ist der automatische Abzug zusätzlich zu
         bereits ausgestempelten Zeiten — Monat: {{ R::hhmm($r['month_sum']['pause']) }}.
+        ° Die Tagesabweichung liegt unter der vereinbarten Toleranz und zählt daher als 0.
     </div>
 
     <table class="sign">

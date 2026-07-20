@@ -13,7 +13,8 @@ class WorkDay extends Model
 {
     protected $fillable = [
         'employee_id', 'work_date', 'gross_minutes', 'break_minutes',
-        'worked_minutes', 'expected_minutes', 'balance_minutes', 'absence_id',
+        'worked_minutes', 'expected_minutes', 'balance_minutes',
+        'raw_balance_minutes', 'absence_id',
     ];
 
     // work_date is left uncast: stored/compared as a plain 'Y-m-d' string so
@@ -25,6 +26,7 @@ class WorkDay extends Model
         'worked_minutes' => 'integer',
         'expected_minutes' => 'integer',
         'balance_minutes' => 'integer',
+        'raw_balance_minutes' => 'integer',
     ];
 
     public function employee(): BelongsTo

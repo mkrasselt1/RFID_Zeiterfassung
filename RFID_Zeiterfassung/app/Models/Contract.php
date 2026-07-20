@@ -29,10 +29,13 @@ class Contract extends Model
         ['from_minutes' => 540, 'minutes' => 45],
     ];
 
+    /** Daily deviations below this many minutes don't accumulate. */
+    public const DEFAULT_BALANCE_TOLERANCE = 5;
+
     protected $fillable = [
         'employee_id', 'title', 'valid_from', 'valid_to',
         'worktime_model', 'target_hours', 'workdays', 'vacation_days_per_year',
-        'break_rules',
+        'break_rules', 'balance_tolerance_minutes',
     ];
 
     protected $casts = [
@@ -96,6 +99,22 @@ class Contract extends Model
         usort($clean, fn (array $a, array $b) => $a['from_minutes'] <=> $b['from_minutes']);
 
         return $clean ?: null;
+    }
+
+    /** Tolerance in minutes for this contract: its own override, or the global one. */
+    public function balanceTolerance(): int
+    {
+        return $this->balance_tolerance_minutes !== null
+            ? max(0, (int) $this->balance_tolerance_minutes)
+            : static::globalBalanceTolerance();
+    }
+
+    /** The app-wide default tolerance (settings, falling back to 5 min; 0 = off). */
+    public static function globalBalanceTolerance(): int
+    {
+        $value = Setting::get('balance_tolerance_minutes');
+
+        return $value === null ? self::DEFAULT_BALANCE_TOLERANCE : max(0, (int) $value);
     }
 
     /**

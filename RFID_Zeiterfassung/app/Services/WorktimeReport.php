@@ -61,6 +61,9 @@ class WorktimeReport
             $soll = (int) ($wd->expected_minutes ?? 0);
             $saldo = (int) ($wd->balance_minutes ?? 0);
             $pause = (int) ($wd->break_minutes ?? 0);
+            // Rohwert vor der Toleranz — zählt nirgends mit, macht aber sichtbar,
+            // warum ein Tag als 0 in die Summe eingeht.
+            $saldoRoh = (int) ($wd->raw_balance_minutes ?? 0);
 
             $hint = '';
             if ($wd?->absence) {
@@ -82,6 +85,8 @@ class WorktimeReport
                 'ist' => $ist,
                 'soll' => $soll,
                 'saldo' => $saldo,
+                'saldo_roh' => $saldoRoh,
+                'toleriert' => $saldo === 0 && $saldoRoh !== 0,
                 'hint' => $hint,
                 'in_month' => $inMonth,
                 'weekend' => $cursor->isWeekend(),

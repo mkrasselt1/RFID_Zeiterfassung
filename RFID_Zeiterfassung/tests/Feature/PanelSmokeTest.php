@@ -205,6 +205,61 @@ class PanelSmokeTest extends TestCase
         ];
     }
 
+    /**
+     * The tolerance is a threshold, not a deduction: below it a day counts as 0,
+     * at or above it the full balance counts.
+     *
+     * @dataProvider toleranceCases
+     */
+    public function test_balance_tolerance(int $balance, int $tolerance, int $expected): void
+    {
+        $this->assertSame($expected, app(WorktimeService::class)->applyTolerance($balance, $tolerance));
+    }
+
+    public static function toleranceCases(): array
+    {
+        return [
+            '+4 min verfällt' => [4, 5, 0],
+            '-4 min verfällt' => [-4, 5, 0],
+            'exakt +5 min zählt voll' => [5, 5, 5],
+            'exakt -5 min zählt voll' => [-5, 5, -5],
+            '-30 min zählt voll, nicht gekürzt' => [-30, 5, -30],
+            '+90 min zählt voll' => [90, 5, 90],
+            'punktgenau 0' => [0, 5, 0],
+            'Toleranz 0 schaltet ab' => [1, 0, 1],
+            'größere Toleranz' => [-14, 15, 0],
+        ];
+    }
+
+    public function test_contract_tolerance_overrides_the_global_default(): void
+    {
+        $employee = $this->makeEmployee();
+        $employee->contracts()->create([
+            'valid_from' => '2024-01-01',
+            'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8,
+            'workdays' => [1, 2, 3, 4, 5],
+            'balance_tolerance_minutes' => 20,
+        ]);
+        $employee->cards()->create([
+            'card_uid' => 'BEEF0003', 'username' => $employee->name, 'add_card' => 1,
+            'device_dep' => 'Buero', 'user_date' => '2026-06-01',
+        ]);
+        // 08:00-16:44 = 524 gross, -30 Pause = 494 netto, Soll 480 -> +14 Saldo.
+        UserLog::create([
+            'employee_id' => $employee->id, 'card_uid' => 'BEEF0003',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
+            'timein' => '08:00:00', 'timeout' => '16:44:00', 'card_out' => 1,
+        ]);
+
+        $wd = app(WorktimeService::class)->recalculateDay($employee, Carbon::parse('2026-06-08'));
+
+        // Unter der Vertragstoleranz von 20 -> zählt nicht, Rohwert bleibt sichtbar.
+        $this->assertSame(14, $wd->raw_balance_minutes);
+        $this->assertSame(0, $wd->balance_minutes);
+        $this->assertSame(0, $employee->fresh()->overtimeBalanceMinutes());
+    }
+
     public function test_contract_break_rules_override_the_global_default(): void
     {
         $employee = $this->makeEmployee();

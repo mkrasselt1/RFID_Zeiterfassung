@@ -69,8 +69,12 @@
                         } elseif ($row['weekend']) {
                             $bg = '#f3f4f6';                                        // Wochenende (grau)
                         } elseif ($row['soll'] > 0 || $row['ist'] > 0) {
-                            $bg = $row['saldo'] >= 0 ? '#dcfce7' : '#fee2e2';       // grün / rot
-                            $note = \App\Services\WorktimeReport::hhmm($row['saldo']);
+                            // Der Kalender zeigt die echte Abweichung; tolerierte Tage
+                            // bleiben neutral eingefärbt, weil sie nicht mitzählen.
+                            $bg = $row['toleriert']
+                                ? '#f3f4f6'
+                                : ($row['saldo'] >= 0 ? '#dcfce7' : '#fee2e2');     // grün / rot
+                            $note = \App\Services\WorktimeReport::hhmm($row['saldo_roh']);
                         }
                     @endphp
                     <div style="background:{{ $bg }};color:{{ $fg }};opacity:{{ $opacity }};border-radius:6px;padding:6px 4px;min-height:46px;font-size:11px;">
@@ -119,11 +123,11 @@
                                 <td class="py-1 px-2 text-right text-gray-500">{{ $row['pause'] ? R::hhmm($row['pause']) : '' }}</td>
                                 <td class="py-1 px-2 text-right">{{ $row['ist'] ? R::hhmm($row['ist']) : '' }}</td>
                                 <td class="py-1 px-2 text-right">{{ $row['soll'] ? R::hhmm($row['soll']) : '' }}</td>
-                                <td @class([
-                                    'py-1 px-2 text-right',
-                                    'text-danger-600' => $row['saldo'] < 0,
-                                    'text-success-600' => $row['saldo'] > 0,
-                                ])>{{ ($row['ist'] || $row['soll']) ? R::hhmm($row['saldo']) : '' }}</td>
+                                <td class="py-1 px-2 text-right"
+                                    style="{{ $row['saldo'] < 0 ? 'color:#d03b3b;' : ($row['saldo'] > 0 ? 'color:#0ca30c;' : '') }}">
+                                    {{ ($row['ist'] || $row['soll']) ? R::hhmm($row['saldo']) : '' }}@if($row['toleriert'])<span
+                                        style="opacity:.55;font-size:11px;" title="Abweichung {{ R::hhmm($row['saldo_roh']) }} liegt unter der Toleranz">°</span>@endif
+                                </td>
                                 <td class="py-1 px-2 text-gray-500">{{ $row['hint'] }}</td>
                             </tr>
                         @endforeach
@@ -143,5 +147,6 @@
 
     <p class="text-xs text-gray-500">* mehrere Stempelungen an diesem Tag · ausgegraute Tage gehören zum Nachbarmonat ·
         „Pause" ist der automatische Abzug zusätzlich zu bereits ausgestempelten Zeiten
-        (Monat: {{ R::hhmm($r['month_sum']['pause']) }}).</p>
+        (Monat: {{ R::hhmm($r['month_sum']['pause']) }}) ·
+        ° Tagesabweichung unter der Toleranz, zählt als 0 (der Kalender zeigt den echten Wert).</p>
 </x-filament-panels::page>

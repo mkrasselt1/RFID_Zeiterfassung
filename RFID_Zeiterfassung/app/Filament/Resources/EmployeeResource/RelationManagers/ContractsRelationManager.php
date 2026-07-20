@@ -40,6 +40,16 @@ class ContractsRelationManager extends RelationManager
                 ->visible(fn (Forms\Get $get) => $get('worktime_model') !== Contract::MODEL_TRACKING),
             Forms\Components\TextInput::make('vacation_days_per_year')->label('Urlaubstage / Jahr')
                 ->numeric()->step(0.5),
+            Forms\Components\TextInput::make('balance_tolerance_minutes')
+                ->label('Toleranz pro Tag (Min.)')
+                ->numeric()->minValue(0)->maxValue(600)
+                // Leer -> null -> globale Einstellung greift.
+                ->placeholder(Contract::globalBalanceTolerance().' (global)')
+                ->helperText('Leer = globale Einstellung. Darunter zählt der Tag als 0, '
+                    .'ab dem Wert zählt die Abweichung vollständig.')
+                ->dehydrateStateUsing(fn ($state) => $state === null || $state === ''
+                    ? null
+                    : max(0, (int) $state)),
             Forms\Components\Fieldset::make('Pausen')
                 ->schema([
                     Forms\Components\Toggle::make('has_break_override')
@@ -96,6 +106,9 @@ class ContractsRelationManager extends RelationManager
                     ->formatStateUsing(fn (string $state) => Contract::MODELS[$state] ?? $state),
                 Tables\Columns\TextColumn::make('target_hours')->label('Soll')->placeholder('-'),
                 Tables\Columns\TextColumn::make('vacation_days_per_year')->label('Urlaub/J')->placeholder('-'),
+                Tables\Columns\TextColumn::make('balance_tolerance_minutes')->label('Toleranz')
+                    ->formatStateUsing(fn (?int $state) => $state === null ? 'global' : $state.' min')
+                    ->color(fn (?int $state) => $state === null ? 'gray' : null),
                 Tables\Columns\TextColumn::make('break_rules')->label('Pausen')
                     ->formatStateUsing(fn (?array $state) => $state
                         ? collect($state)->map(fn ($r) => $r['minutes'].' min')->implode(' / ')

@@ -51,6 +51,7 @@ class ManageSettings extends Page implements HasForms
             'holiday_region' => Setting::get('holiday_region', 'DE-SN'),
             'tracking_start' => Setting::get('tracking_start'),
             'break_rules' => \App\Models\Contract::globalBreakRules(),
+            'balance_tolerance_minutes' => \App\Models\Contract::globalBalanceTolerance(),
             'operator_name' => $operator['name'] ?? '',
             'operator_address' => $operator['address'] ?? '',
             'operator_telephone' => $operator['telephone'] ?? '',
@@ -85,6 +86,18 @@ class ManageSettings extends Page implements HasForms
                             ->label('Zeiterfassung aktiv ab')
                             ->helperText('Tage vor diesem Datum bauen kein Soll/Saldo (z. B. Go-Live der Stempeluhren). Leer = keine Grenze.'),
                     ])->columns(2),
+                Section::make('Toleranz')
+                    ->description('Kleine Tagesabweichungen sollen sich nicht zu einem Saldo '
+                        .'aufsummieren. Der Wert ist eine Schwelle, kein Abzug: darunter zählt '
+                        .'der Tag als 0, ab dem Wert zählt die Abweichung vollständig. '
+                        .'Verträge können ihn überschreiben.')
+                    ->schema([
+                        TextInput::make('balance_tolerance_minutes')
+                            ->label('Toleranz pro Tag (Min.)')
+                            ->numeric()->minValue(0)->maxValue(600)->required()
+                            ->helperText('0 = aus. Beispiel bei 5: −4 Min. zählen als 0, '
+                                .'−5 Min. zählen als −5.'),
+                    ]),
                 Section::make('Pausen')
                     ->description('Mindestpausen nach Anwesenheitsdauer. Bereits gestempelte Pausen '
                         .'werden angerechnet — abgezogen wird nur der fehlende Rest. Verträge können '
@@ -140,6 +153,7 @@ class ManageSettings extends Page implements HasForms
         Setting::put('holiday_region', $data['holiday_region'] ?? 'DE-SN');
         Setting::put('tracking_start', $data['tracking_start'] ?: null);
         Setting::put('break_rules', \App\Models\Contract::normalizeBreakRules($data['break_rules'] ?? null));
+        Setting::put('balance_tolerance_minutes', max(0, (int) ($data['balance_tolerance_minutes'] ?? 0)));
         Setting::put('operator', [
             'name' => $data['operator_name'],
             'address' => $data['operator_address'],

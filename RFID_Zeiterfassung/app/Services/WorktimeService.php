@@ -117,6 +117,20 @@ class WorktimeService
         return min($deduction, max(0, $gross - $threshold));
     }
 
+    /**
+     * A day's balance after the tolerance.
+     *
+     * The tolerance is a threshold, not a deduction: a deviation below it does
+     * not accumulate at all (a 4-minute day counts as 0), while at or above it
+     * the *full* balance counts (a 5-minute day counts as 5, not as 0). So it
+     * suppresses stamping noise without ever quietly shaving real time.
+     * A tolerance of 0 disables it.
+     */
+    public function applyTolerance(int $balance, int $tolerance): int
+    {
+        return abs($balance) < $tolerance ? 0 : $balance;
+    }
+
     /** Wall-clock minutes since midnight for a stored 'H:i:s' time. */
     private function minutesOfDay(?string $time): int
     {
@@ -189,10 +203,10 @@ class WorktimeService
             // No active contract → presence is recorded as Ist, but the day does
             // not build any Soll/Saldo (otherwise legacy data inflates the balance).
             $storedExpected = 0;
-            $balance = 0;
+            $rawBalance = 0;
         } else {
             $storedExpected = ($absence && $absence->type === Absence::TYPE_UNPAID) ? 0 : $expected;
-            $balance = match (true) {
+            $rawBalance = match (true) {
                 $absence === null => $worked - $expected,
                 $absence->type === Absence::TYPE_VACATION,
                 $absence->type === Absence::TYPE_SPECIAL,
@@ -202,6 +216,11 @@ class WorktimeService
                 default => $worked - $expected,
             };
         }
+
+        $balance = $this->applyTolerance(
+            $rawBalance,
+            $contract?->balanceTolerance() ?? Contract::globalBalanceTolerance(),
+        );
 
         // Drop completely empty days (no work, no Soll, no absence).
         if ($minutes['gross'] === 0 && $storedExpected === 0 && $absence === null) {
@@ -219,6 +238,7 @@ class WorktimeService
                 'worked_minutes' => $worked,
                 'expected_minutes' => $storedExpected,
                 'balance_minutes' => $balance,
+                'raw_balance_minutes' => $rawBalance,
                 'absence_id' => $absence?->id,
             ],
         );
