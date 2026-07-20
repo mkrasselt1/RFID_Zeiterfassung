@@ -47,11 +47,24 @@ Cron im Panel, Document-Root frei wählbar.
 **Git → „Zusätzliche Bereitstellungsaktionen"** (laufen nach jedem Pull im Repo-Root):
 
 ```sh
+set -e                     # ohne dies läuft die Kette nach einem Fehler weiter
 cd RFID_Zeiterfassung
 composer install --no-dev --optimize-autoloader --no-interaction
 php artisan migrate --force
 php artisan optimize:clear
+php artisan migrate:status | grep -i pending && echo "WARNUNG: offene Migrationen!" || true
 ```
+
+> **`set -e` ist wichtig.** Die Schritte hängen voneinander ab: schlägt
+> `composer install` fehl (z. B. weil `composer.lock` eine neuere PHP-Version
+> verlangt als die Domain hat), läuft ohne `set -e` `migrate` trotzdem — oder die
+> Kette bricht still ab und die Migration wird übersprungen. Beides fällt erst
+> auf, wenn das Panel eine SQL-Exception wirft („Unknown column …"). Nach jedem
+> Deploy das Aktionsprotokoll in Plesk prüfen, nicht nur die Seite aufrufen.
+
+`migrate --force` ist ausdrücklich für nicht-interaktive Deploys gedacht (`--force`
+unterdrückt nur die Sicherheitsabfrage in Produktion, es erzwingt nichts anderes).
+Die Migrationen hier sind additiv und idempotent — ein erneuter Lauf ist folgenlos.
 
 Optional danach (Performance; nur wenn `.env` stabil ist — bei `.env`-Änderung
 greift beim nächsten Deploy automatisch wieder `optimize:clear`):
@@ -88,6 +101,13 @@ php /var/www/vhosts/arbeitszeit.kaffeeteam.de/httpdocs/RFID_Zeiterfassung/artisa
 4. Falls Config/Routes gecacht werden: `php artisan optimize:clear` und ggf.
    neu cachen. (Ohne Caching liest die App `.env` pro Request — auf Shared
    Hosting unkritisch.)
+5. `php artisan migrate:status` — es darf nichts „Pending" übrig sein.
+
+> Läuft nur der Git-Pull (ohne Composer/Migrate), ist der Code neu und das Schema
+> alt. Die App startet trotzdem, weil `vendor/` vom letzten erfolgreichen Deploy
+> liegen bleibt — der Fehler zeigt sich erst beim Schreiben („Unknown column …").
+> `php artisan migrate --force` lässt sich in dem Fall gefahrlos einzeln
+> nachziehen; es braucht nur ein vorhandenes `vendor/`, keinen Composer-Lauf.
 
 ## Nach dem Deploy testen
 
