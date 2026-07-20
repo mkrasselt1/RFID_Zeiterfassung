@@ -231,6 +231,58 @@ class PanelSmokeTest extends TestCase
         ];
     }
 
+    /**
+     * While today is still running, the open stamping counts up to "now" and the
+     * expected time is capped at it — so the day never looks like a shortfall.
+     */
+    public function test_running_day_counts_open_stamping_and_never_shows_a_shortfall(): void
+    {
+        // 2026-06-08 is a Monday; freeze midday so the assertions are deterministic.
+        $this->travelTo(Carbon::parse('2026-06-08 12:00:00'));
+
+        $employee = $this->makeEmployee();
+        $employee->contracts()->create([
+            'valid_from' => '2024-01-01',
+            'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8,
+            'workdays' => [1, 2, 3, 4, 5],
+        ]);
+        $employee->cards()->create([
+            'card_uid' => 'BEEF0004', 'username' => $employee->name, 'add_card' => 1,
+            'device_dep' => 'Buero', 'user_date' => '2026-06-01',
+        ]);
+        // Checked in at 08:00, no checkout yet.
+        UserLog::create([
+            'employee_id' => $employee->id, 'card_uid' => 'BEEF0004',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
+            'timein' => '08:00:00', 'timeout' => '00:00:00', 'card_out' => 0,
+        ]);
+
+        $service = app(WorktimeService::class);
+
+        // Midday: 4 h delivered, Soll auf diese 4 h begrenzt -> kein Minus.
+        $wd = $service->recalculateDay($employee, Carbon::parse('2026-06-08'));
+        $this->assertSame(240, $wd->gross_minutes);
+        $this->assertSame(240, $wd->worked_minutes);
+        $this->assertSame(240, $wd->expected_minutes);
+        $this->assertSame(0, $wd->balance_minutes);
+
+        // Abends noch eingestempelt: 9:30 Anwesenheit, 30 min Pause (auf 9:00
+        // gekappt) -> 9:00 netto, volles Soll greift wieder, +1:00 Saldo.
+        $this->travelTo(Carbon::parse('2026-06-08 17:30:00'));
+        $wd = $service->recalculateDay($employee, Carbon::parse('2026-06-08'));
+        $this->assertSame(540, $wd->worked_minutes);
+        $this->assertSame(480, $wd->expected_minutes);
+        $this->assertSame(60, $wd->balance_minutes);
+
+        // Am Folgetag zählt die vergessene Stempelung nicht mehr mit: der Tag
+        // wächst nicht stillschweigend weiter.
+        $this->travelTo(Carbon::parse('2026-06-09 09:00:00'));
+        $wd = $service->recalculateDay($employee, Carbon::parse('2026-06-08'));
+        $this->assertSame(0, $wd->gross_minutes);
+        $this->assertSame(-480, $wd->balance_minutes, 'offener Vortag verfällt, volles Soll schlägt durch');
+    }
+
     public function test_contract_tolerance_overrides_the_global_default(): void
     {
         $employee = $this->makeEmployee();

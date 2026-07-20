@@ -148,5 +148,6 @@
     <p class="text-xs text-gray-500">* mehrere Stempelungen an diesem Tag · ausgegraute Tage gehören zum Nachbarmonat ·
         „Pause" ist der automatische Abzug zusätzlich zu bereits ausgestempelten Zeiten
         (Monat: {{ R::hhmm($r['month_sum']['pause']) }}) ·
-        ° Tagesabweichung unter der Toleranz, zählt als 0 (der Kalender zeigt den echten Wert).</p>
+        ° Tagesabweichung unter der Toleranz, zählt als 0 (der Kalender zeigt den echten Wert) ·
+        der laufende Tag zählt bis jetzt, sein Soll ist darauf begrenzt — das volle Soll greift ab morgen.</p>
 </x-filament-panels::page>

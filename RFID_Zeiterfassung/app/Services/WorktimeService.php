@@ -48,13 +48,14 @@ class WorktimeService
     {
         $logs = UserLog::where('employee_id', $employee->id)
             ->where('checkindate', $date->toDateString())
-            ->where('card_out', 1)
             ->get();
 
         $spans = [];
         $gross = 0;
         foreach ($logs as $log) {
-            $minutes = $this->logMinutes($log);
+            $minutes = $log->card_out
+                ? $this->logMinutes($log)
+                : $this->runningMinutes($log, $date);
             if ($minutes <= 0) {
                 continue;
             }
@@ -139,6 +140,26 @@ class WorktimeService
         return ((int) ($parts[0] ?? 0)) * 60 + ((int) ($parts[1] ?? 0));
     }
 
+    /**
+     * An open stamping (no checkout yet) counts up to *now*, so the running day
+     * shows the time already delivered instead of nothing.
+     *
+     * Only on the day it belongs to: a forgotten checkout on a past day still
+     * counts as zero rather than silently growing to 24 hours. `now` comes from
+     * the same clock that wrote `timein` (Carbon, app timezone), so the
+     * difference is correct regardless of which zone that is.
+     */
+    private function runningMinutes(UserLog $log, CarbonInterface $date): int
+    {
+        if (empty($log->timein) || ! Carbon::parse($date->toDateString())->isToday()) {
+            return 0;
+        }
+
+        $now = Carbon::now();
+
+        return max(0, ($now->hour * 60 + $now->minute) - $this->minutesOfDay($log->timein));
+    }
+
     private function logMinutes(UserLog $log): int
     {
         if (empty($log->timein) || empty($log->timeout) || $log->timeout === '00:00:00') {
@@ -198,6 +219,17 @@ class WorktimeService
         $expected = ($contract && ! $day->isAfter(Carbon::today()))
             ? $contract->expectedMinutesForDate($day)
             : 0;
+
+        // The running day must not look like a shortfall: until it is over, the
+        // expected time is capped at what has already been delivered, so the
+        // balance sits at 0 while the employee is still working and only turns
+        // positive once they pass their target. The full expectation applies from
+        // the next day on (the nightly recalculation settles it).
+        // Absence days are excluded: their balance ignores `expected` anyway, and
+        // capping it would understate the month's Soll.
+        if ($absence === null && $day->isToday()) {
+            $expected = min($expected, $worked);
+        }
 
         if (! $contract) {
             // No active contract → presence is recorded as Ist, but the day does
