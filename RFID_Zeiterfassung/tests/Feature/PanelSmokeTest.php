@@ -149,7 +149,8 @@ class PanelSmokeTest extends TestCase
             'device_dep' => 'Buero', 'user_date' => '2026-06-08',
         ]);
 
-        // A worked Monday: 08:00–16:30 = 510 minutes (+30 over the 480 target).
+        // A worked Monday: 08:00–16:30 = 510 minutes stamped, minus the 30 min
+        // statutory break (>6 h, none stamped out) = 480 net -> target met.
         UserLog::create([
             'employee_id' => $employee->id, 'card_uid' => 'AABBCCDD',
             'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
@@ -158,9 +159,11 @@ class PanelSmokeTest extends TestCase
 
         $service = app(WorktimeService::class);
         $worked = $service->recalculateDay($employee, Carbon::parse('2026-06-08'));
-        $this->assertSame(510, $worked->worked_minutes);
+        $this->assertSame(510, $worked->gross_minutes);
+        $this->assertSame(30, $worked->break_minutes);
+        $this->assertSame(480, $worked->worked_minutes);
         $this->assertSame(480, $worked->expected_minutes);
-        $this->assertSame(30, $worked->balance_minutes);
+        $this->assertSame(0, $worked->balance_minutes);
 
         // An approved vacation Tuesday neutralizes the balance (credited).
         $employee->absences()->create([
@@ -171,6 +174,90 @@ class PanelSmokeTest extends TestCase
         $this->assertSame(0, $vac->worked_minutes);
         $this->assertSame(0, $vac->balance_minutes);
         $this->assertNotNull($vac->absence_id);
+    }
+
+    /**
+     * The staircase is applied per day against the stamped presence; time the
+     * employee already stamped out counts towards it, and a day is never pushed
+     * below the threshold that triggered the deduction.
+     *
+     * @dataProvider breakCases
+     */
+    public function test_break_deduction_per_day(int $gross, int $stamped, int $expected): void
+    {
+        $this->assertSame($expected, app(WorktimeService::class)
+            ->breakDeduction($gross, $stamped, Contract::DEFAULT_BREAK_RULES));
+    }
+
+    public static function breakCases(): array
+    {
+        return [
+            'unter 6 h, keine Pause' => [240, 0, 0],
+            'exakt 6 h' => [360, 0, 0],
+            'knapp über 6 h wird auf 6 h gekappt' => [375, 0, 15],
+            '6:45 -> volle 30 min' => [405, 0, 30],
+            '9 h durchgestempelt' => [540, 0, 30],
+            'über 9 h -> 45 min' => [660, 0, 45],
+            'gestempelte 30 min decken die Pflicht' => [510, 30, 0],
+            'gestempelte 15 min -> nur 15 min Rest' => [525, 15, 15],
+            'großzügig gestempelt -> kein Abzug' => [600, 60, 0],
+            'knapp über 6 h mit 20 min gestempelt' => [370, 20, 10],
+        ];
+    }
+
+    public function test_contract_break_rules_override_the_global_default(): void
+    {
+        $employee = $this->makeEmployee();
+        $employee->contracts()->create([
+            'valid_from' => '2024-01-01',
+            'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8,
+            'workdays' => [1, 2, 3, 4, 5],
+            'break_rules' => [['from_minutes' => 240, 'minutes' => 60]],
+        ]);
+        $employee->cards()->create([
+            'card_uid' => 'BEEF0001', 'username' => $employee->name, 'add_card' => 1,
+            'device_dep' => 'Buero', 'user_date' => '2026-06-01',
+        ]);
+        UserLog::create([
+            'employee_id' => $employee->id, 'card_uid' => 'BEEF0001',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
+            'timein' => '08:00:00', 'timeout' => '16:00:00', 'card_out' => 1,
+        ]);
+
+        // The contract's own staircase wins: 8 h stamped - 60 min = 420 net.
+        $wd = app(WorktimeService::class)->recalculateDay($employee, Carbon::parse('2026-06-08'));
+        $this->assertSame(480, $wd->gross_minutes);
+        $this->assertSame(60, $wd->break_minutes);
+        $this->assertSame(420, $wd->worked_minutes);
+    }
+
+    public function test_stamped_out_lunch_is_not_deducted_twice(): void
+    {
+        $employee = $this->makeEmployee();
+        $employee->contracts()->create([
+            'valid_from' => '2024-01-01',
+            'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8,
+            'workdays' => [1, 2, 3, 4, 5],
+        ]);
+        $employee->cards()->create([
+            'card_uid' => 'BEEF0002', 'username' => $employee->name, 'add_card' => 1,
+            'device_dep' => 'Buero', 'user_date' => '2026-06-01',
+        ]);
+        // 08:00-12:00 and 12:30-17:00 -> 8:30 present, 30 min stamped out.
+        foreach ([['08:00:00', '12:00:00'], ['12:30:00', '17:00:00']] as [$in, $out]) {
+            UserLog::create([
+                'employee_id' => $employee->id, 'card_uid' => 'BEEF0002',
+                'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
+                'timein' => $in, 'timeout' => $out, 'card_out' => 1,
+            ]);
+        }
+
+        $wd = app(WorktimeService::class)->recalculateDay($employee, Carbon::parse('2026-06-08'));
+        $this->assertSame(510, $wd->gross_minutes);
+        $this->assertSame(0, $wd->break_minutes, 'stamped lunch already covers the statutory break');
+        $this->assertSame(510, $wd->worked_minutes);
     }
 
     public function test_chip_reassignment_keeps_history_with_original_employee(): void
@@ -199,8 +286,9 @@ class PanelSmokeTest extends TestCase
             'timein' => '08:00:00', 'timeout' => '12:00:00', 'card_out' => 1,
         ]);
 
-        // Alice keeps her old day; Bob does NOT inherit it despite now holding the card.
-        $this->assertSame(480, $service->workedMinutes($alice, Carbon::parse('2022-05-10')));
+        // Alice keeps her old day; Bob does NOT inherit it despite now holding the
+        // card. 8 h stamped minus the 30 min statutory break = 450 net.
+        $this->assertSame(450, $service->workedMinutes($alice, Carbon::parse('2022-05-10')));
         $this->assertSame(0, $service->workedMinutes($bob, Carbon::parse('2022-05-10')));
 
         // Bob's own day stays his; Alice has nothing there.
@@ -223,10 +311,11 @@ class PanelSmokeTest extends TestCase
 
         $service = app(WorktimeService::class);
 
-        // Worked day without a contract: Ist recorded, but no Soll/Saldo.
+        // Worked day without a contract: Ist recorded (net of the global break
+        // rule), but no Soll/Saldo.
         $wd = $service->recalculateDay($employee, Carbon::parse('2026-06-08'));
         $this->assertNotNull($wd);
-        $this->assertSame(480, $wd->worked_minutes);
+        $this->assertSame(450, $wd->worked_minutes);
         $this->assertSame(0, $wd->expected_minutes);
         $this->assertSame(0, $wd->balance_minutes);
         $this->assertSame(0, $employee->fresh()->overtimeBalanceMinutes());

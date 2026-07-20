@@ -12,14 +12,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class WorkDay extends Model
 {
     protected $fillable = [
-        'employee_id', 'work_date', 'worked_minutes',
-        'expected_minutes', 'balance_minutes', 'absence_id',
+        'employee_id', 'work_date', 'gross_minutes', 'break_minutes',
+        'worked_minutes', 'expected_minutes', 'balance_minutes', 'absence_id',
     ];
 
     // work_date is left uncast: stored/compared as a plain 'Y-m-d' string so
     // updateOrCreate lookups match (a 'date' cast serializes to 'Y-m-d H:i:s'
     // and would never match the bare date, causing duplicate inserts).
     protected $casts = [
+        'gross_minutes' => 'integer',
+        'break_minutes' => 'integer',
         'worked_minutes' => 'integer',
         'expected_minutes' => 'integer',
         'balance_minutes' => 'integer',

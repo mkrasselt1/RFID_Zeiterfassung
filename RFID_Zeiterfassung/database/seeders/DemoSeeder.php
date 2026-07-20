@@ -183,19 +183,27 @@ class DemoSeeder extends Seeder
                 $worked = max(180, $target + mt_rand(-35, 55));
 
                 $in = $cursor->copy()->setTime(8, 0)->addMinutes(mt_rand(-20, 25));
-                $out = $in->copy()->addMinutes($worked);
 
-                UserLog::create([
-                    'employee_id' => $employee->id,
-                    'card_uid' => $card->card_uid,
-                    'device_uid' => $card->device_uid,
-                    'device_dep' => $card->device_dep,
-                    'checkindate' => $cursor->toDateString(),
-                    'timein' => $in->format('H:i:s'),
-                    'timeout' => $out->format('H:i:s'),
-                    'card_out' => 1,
-                    'calendarEventId' => null,
-                ]);
+                // Most days the employee stamps out for lunch (so `$worked` is the
+                // net time); occasionally they don't and the automatic break applies.
+                $lunch = mt_rand(1, 100) <= 80 ? mt_rand(30, 45) : 0;
+                $spans = $lunch > 0
+                    ? [[0, intdiv($worked, 2)], [intdiv($worked, 2) + $lunch, $worked + $lunch]]
+                    : [[0, $worked]];
+
+                foreach ($spans as [$offsetIn, $offsetOut]) {
+                    UserLog::create([
+                        'employee_id' => $employee->id,
+                        'card_uid' => $card->card_uid,
+                        'device_uid' => $card->device_uid,
+                        'device_dep' => $card->device_dep,
+                        'checkindate' => $cursor->toDateString(),
+                        'timein' => $in->copy()->addMinutes($offsetIn)->format('H:i:s'),
+                        'timeout' => $in->copy()->addMinutes($offsetOut)->format('H:i:s'),
+                        'card_out' => 1,
+                        'calendarEventId' => null,
+                    ]);
+                }
             }
 
             $cursor->addDay();

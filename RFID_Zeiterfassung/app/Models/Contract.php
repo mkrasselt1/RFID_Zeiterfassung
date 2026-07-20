@@ -23,9 +23,16 @@ class Contract extends Model
         self::MODEL_TRACKING => 'Nur Erfassung (keine Sollzeit)',
     ];
 
+    /** Statutory minimum breaks (ArbZG §4): >6 h → 30 min, >9 h → 45 min. */
+    public const DEFAULT_BREAK_RULES = [
+        ['from_minutes' => 360, 'minutes' => 30],
+        ['from_minutes' => 540, 'minutes' => 45],
+    ];
+
     protected $fillable = [
         'employee_id', 'title', 'valid_from', 'valid_to',
         'worktime_model', 'target_hours', 'workdays', 'vacation_days_per_year',
+        'break_rules',
     ];
 
     protected $casts = [
@@ -34,6 +41,7 @@ class Contract extends Model
         'target_hours' => 'decimal:2',
         'workdays' => 'array',
         'vacation_days_per_year' => 'decimal:1',
+        'break_rules' => 'array',
     ];
 
     public function employee(): BelongsTo
@@ -50,6 +58,44 @@ class Contract extends Model
     public function isWorkday(Carbon $date): bool
     {
         return in_array($date->isoWeekday(), $this->workdayList(), true);
+    }
+
+    /**
+     * The break staircase that applies to this contract: its own override, or
+     * the global default from the settings. Entries are normalized to
+     * ['from_minutes' => int, 'minutes' => int] and sorted ascending.
+     */
+    public function breakRules(): array
+    {
+        return static::normalizeBreakRules($this->break_rules ?: null)
+            ?? static::globalBreakRules();
+    }
+
+    /** The app-wide default staircase (settings, falling back to ArbZG). */
+    public static function globalBreakRules(): array
+    {
+        return static::normalizeBreakRules(Setting::get('break_rules'))
+            ?? self::DEFAULT_BREAK_RULES;
+    }
+
+    /** Null for an empty/unusable staircase, so callers can fall back. */
+    public static function normalizeBreakRules(mixed $rules): ?array
+    {
+        if (! is_array($rules)) {
+            return null;
+        }
+
+        $clean = [];
+        foreach ($rules as $rule) {
+            $from = (int) ($rule['from_minutes'] ?? 0);
+            $minutes = (int) ($rule['minutes'] ?? 0);
+            if ($from >= 0 && $minutes > 0) {
+                $clean[] = ['from_minutes' => $from, 'minutes' => $minutes];
+            }
+        }
+        usort($clean, fn (array $a, array $b) => $a['from_minutes'] <=> $b['from_minutes']);
+
+        return $clean ?: null;
     }
 
     /**

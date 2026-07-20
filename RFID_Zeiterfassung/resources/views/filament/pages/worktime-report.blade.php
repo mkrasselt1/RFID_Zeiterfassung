@@ -109,6 +109,7 @@
                             <th class="py-1 px-2">Tag</th>
                             <th class="py-1 px-2">Rein</th>
                             <th class="py-1 px-2">Raus</th>
+                            <th class="py-1 px-2 text-right">Pause</th>
                             <th class="py-1 px-2 text-right">Ist</th>
                             <th class="py-1 px-2 text-right">Soll</th>
                             <th class="py-1 px-2 text-right">Saldo</th>
@@ -125,6 +126,7 @@
                                 <td class="py-1 px-2 font-medium whitespace-nowrap">{{ $row['wd'] }} {{ $row['day'] }}</td>
                                 <td class="py-1 px-2">{{ $row['in'] }}</td>
                                 <td class="py-1 px-2">{{ $row['out'] }}{{ $row['multiple'] ? ' *' : '' }}</td>
+                                <td class="py-1 px-2 text-right text-gray-500">{{ $row['pause'] ? R::hhmm($row['pause']) : '' }}</td>
                                 <td class="py-1 px-2 text-right">{{ $row['ist'] ? R::hhmm($row['ist']) : '' }}</td>
                                 <td class="py-1 px-2 text-right">{{ $row['soll'] ? R::hhmm($row['soll']) : '' }}</td>
                                 <td @class([
@@ -137,6 +139,7 @@
                         @endforeach
                         <tr class="font-semibold border-t-2">
                             <td class="py-1 px-2" colspan="3">Summe KW {{ $week['kw'] }}</td>
+                            <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['pause']) }}</td>
                             <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['ist']) }}</td>
                             <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['soll']) }}</td>
                             <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['saldo']) }}</td>
@@ -148,5 +151,7 @@
         </x-filament::section>
     @endforeach
 
-    <p class="text-xs text-gray-500">* mehrere Stempelungen an diesem Tag · ausgegraute Tage gehören zum Nachbarmonat.</p>
+    <p class="text-xs text-gray-500">* mehrere Stempelungen an diesem Tag · ausgegraute Tage gehören zum Nachbarmonat ·
+        „Pause" ist der automatische Abzug zusätzlich zu bereits ausgestempelten Zeiten
+        (Monat: {{ R::hhmm($r['month_sum']['pause']) }}).</p>
 </x-filament-panels::page>

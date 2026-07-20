@@ -40,7 +40,47 @@ class ContractsRelationManager extends RelationManager
                 ->visible(fn (Forms\Get $get) => $get('worktime_model') !== Contract::MODEL_TRACKING),
             Forms\Components\TextInput::make('vacation_days_per_year')->label('Urlaubstage / Jahr')
                 ->numeric()->step(0.5),
+            Forms\Components\Fieldset::make('Pausen')
+                ->schema([
+                    Forms\Components\Toggle::make('has_break_override')
+                        ->label('Eigene Pausenstaffel')
+                        ->helperText('Aus = globale Staffel aus den Einstellungen ('.static::globalRuleSummary().').')
+                        ->live()
+                        ->dehydrated(false)
+                        ->afterStateHydrated(fn (Forms\Components\Toggle $component, ?Contract $record) => $component
+                            ->state((bool) $record?->break_rules)),
+                    Forms\Components\Repeater::make('break_rules')
+                        ->label('Staffel')
+                        ->schema([
+                            Forms\Components\TextInput::make('from_minutes')->label('Ab Arbeitszeit (Min.)')
+                                ->numeric()->required()->minValue(0),
+                            Forms\Components\TextInput::make('minutes')->label('Pause (Min.)')
+                                ->numeric()->required()->minValue(1),
+                        ])
+                        ->columns(2)
+                        ->defaultItems(0)
+                        ->addActionLabel('Stufe hinzufügen')
+                        ->visible(fn (Forms\Get $get) => (bool) $get('has_break_override'))
+                        // Always dehydrated: toggling the override off must clear a
+                        // previously stored staircase, and hidden fields are skipped
+                        // by default. null -> the global default applies.
+                        ->dehydrated(true)
+                        ->dehydrateStateUsing(fn (?array $state, Forms\Get $get) => $get('has_break_override')
+                            ? Contract::normalizeBreakRules($state)
+                            : null),
+                ])->columns(1),
         ])->columns(2);
+    }
+
+    /** Human-readable global staircase, e.g. "ab 6:00 → 30 min, ab 9:00 → 45 min". */
+    protected static function globalRuleSummary(): string
+    {
+        return collect(Contract::globalBreakRules())
+            ->map(fn (array $r) => sprintf(
+                'ab %d:%02d → %d min',
+                intdiv($r['from_minutes'], 60), $r['from_minutes'] % 60, $r['minutes'],
+            ))
+            ->implode(', ');
     }
 
     public function table(Table $table): Table
@@ -56,6 +96,11 @@ class ContractsRelationManager extends RelationManager
                     ->formatStateUsing(fn (string $state) => Contract::MODELS[$state] ?? $state),
                 Tables\Columns\TextColumn::make('target_hours')->label('Soll')->placeholder('-'),
                 Tables\Columns\TextColumn::make('vacation_days_per_year')->label('Urlaub/J')->placeholder('-'),
+                Tables\Columns\TextColumn::make('break_rules')->label('Pausen')
+                    ->formatStateUsing(fn (?array $state) => $state
+                        ? collect($state)->map(fn ($r) => $r['minutes'].' min')->implode(' / ')
+                        : 'global')
+                    ->color(fn (?array $state) => $state ? null : 'gray'),
             ])
             ->headerActions([
                 Tables\Actions\CreateAction::make(),

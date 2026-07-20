@@ -56,7 +56,7 @@
         <table class="week">
             <thead>
                 <tr>
-                    <th>Tag</th><th>Rein</th><th>Raus</th>
+                    <th>Tag</th><th>Rein</th><th>Raus</th><th class="r">Pause</th>
                     <th class="r">Ist</th><th class="r">Soll</th><th class="r">Saldo</th><th>Hinweis</th>
                 </tr>
             </thead>
@@ -66,6 +66,7 @@
                         <td class="{{ $row['in_month'] ? '' : 'muted' }}">{{ $row['wd'] }} {{ $row['day'] }}</td>
                         <td>{{ $row['in'] }}</td>
                         <td>{{ $row['out'] }}{{ $row['multiple'] ? ' *' : '' }}</td>
+                        <td class="r">{{ $row['pause'] ? R::hhmm($row['pause']) : '' }}</td>
                         <td class="r">{{ $row['ist'] ? R::hhmm($row['ist']) : '' }}</td>
                         <td class="r">{{ $row['soll'] ? R::hhmm($row['soll']) : '' }}</td>
                         <td class="r {{ $row['saldo'] < 0 ? 'neg' : ($row['saldo'] > 0 ? 'pos' : '') }}">{{ ($row['ist'] || $row['soll']) ? R::hhmm($row['saldo']) : '' }}</td>
@@ -74,6 +75,7 @@
                 @endforeach
                 <tr class="sumrow">
                     <td colspan="3">Summe KW {{ $week['kw'] }}</td>
+                    <td class="r">{{ R::hhmm($week['sum']['pause']) }}</td>
                     <td class="r">{{ R::hhmm($week['sum']['ist']) }}</td>
                     <td class="r">{{ R::hhmm($week['sum']['soll']) }}</td>
                     <td class="r">{{ R::hhmm($week['sum']['saldo']) }}</td>
@@ -82,6 +84,11 @@
             </tbody>
         </table>
     @endforeach
+
+    <div class="sub">
+        * mehrere Stempelungen an diesem Tag. „Pause" ist der automatische Abzug zusätzlich zu
+        bereits ausgestempelten Zeiten — Monat: {{ R::hhmm($r['month_sum']['pause']) }}.
+    </div>
 
     <table class="sign">
         <tr>

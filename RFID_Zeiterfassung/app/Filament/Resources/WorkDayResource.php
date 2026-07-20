@@ -54,6 +54,10 @@ class WorkDayResource extends Resource
                         ? Carbon::createFromFormat('Y-m', $state)->translatedFormat('F Y') : ''),
                 Tables\Columns\TextColumn::make('employee.name')->label('Mitarbeiter')
                     ->visible($isManager),
+                Tables\Columns\TextColumn::make('break_minutes')->label('Pause')
+                    ->formatStateUsing(fn (int $state) => static::hhmm($state))
+                    ->color('gray')
+                    ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
                 Tables\Columns\TextColumn::make('worked_minutes')->label('Ist')
                     ->formatStateUsing(fn (int $state) => static::hhmm($state))
                     ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
@@ -114,6 +118,7 @@ class WorkDayResource extends Resource
     {
         $query = parent::getEloquentQuery()
             ->selectRaw('MIN(id) as id, employee_id, substr(work_date, 1, 7) as period, '
+                .'SUM(break_minutes) as break_minutes, '
                 .'SUM(worked_minutes) as worked_minutes, '
                 .'SUM(expected_minutes) as expected_minutes, '
                 .'SUM(balance_minutes) as balance_minutes')
@@ -139,11 +144,12 @@ class WorkDayResource extends Resource
 
         return response()->streamDownload(function () use ($rows) {
             $out = fopen('php://output', 'w');
-            fputcsv($out, ['Monat', 'Mitarbeiter', 'Ist', 'Soll', 'Saldo']);
+            fputcsv($out, ['Monat', 'Mitarbeiter', 'Pause', 'Ist', 'Soll', 'Saldo']);
             foreach ($rows as $r) {
                 fputcsv($out, [
                     $r->period,
                     $r->employee?->name,
+                    static::hhmm((int) $r->break_minutes),
                     static::hhmm((int) $r->worked_minutes),
                     static::hhmm((int) $r->expected_minutes),
                     static::hhmm((int) $r->balance_minutes),

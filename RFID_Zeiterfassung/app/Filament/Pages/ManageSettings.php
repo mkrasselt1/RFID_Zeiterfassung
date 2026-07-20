@@ -50,6 +50,7 @@ class ManageSettings extends Page implements HasForms
             'timezone' => Setting::get('timezone', 'Europe/Berlin'),
             'holiday_region' => Setting::get('holiday_region', 'DE-SN'),
             'tracking_start' => Setting::get('tracking_start'),
+            'break_rules' => \App\Models\Contract::globalBreakRules(),
             'operator_name' => $operator['name'] ?? '',
             'operator_address' => $operator['address'] ?? '',
             'operator_telephone' => $operator['telephone'] ?? '',
@@ -84,6 +85,25 @@ class ManageSettings extends Page implements HasForms
                             ->label('Zeiterfassung aktiv ab')
                             ->helperText('Tage vor diesem Datum bauen kein Soll/Saldo (z. B. Go-Live der Stempeluhren). Leer = keine Grenze.'),
                     ])->columns(2),
+                Section::make('Pausen')
+                    ->description('Mindestpausen nach Anwesenheitsdauer. Bereits gestempelte Pausen '
+                        .'werden angerechnet — abgezogen wird nur der fehlende Rest. Verträge können '
+                        .'diese Staffel überschreiben.')
+                    ->schema([
+                        \Filament\Forms\Components\Repeater::make('break_rules')
+                            ->label('Staffel')
+                            ->schema([
+                                TextInput::make('from_minutes')->label('Ab Arbeitszeit (Min.)')
+                                    ->numeric()->required()->minValue(0),
+                                TextInput::make('minutes')->label('Pause (Min.)')
+                                    ->numeric()->required()->minValue(1),
+                            ])
+                            ->columns(2)
+                            ->defaultItems(0)
+                            ->addActionLabel('Stufe hinzufügen')
+                            ->helperText('Gesetzlich (ArbZG §4): ab 360 Min. → 30 Min., ab 540 Min. → 45 Min. '
+                                .'Leer = gesetzliche Vorgabe.'),
+                    ]),
                 Section::make('Betreiber')
                     ->schema([
                         TextInput::make('operator_name')->label('Name'),
@@ -119,6 +139,7 @@ class ManageSettings extends Page implements HasForms
         Setting::put('timezone', $data['timezone']);
         Setting::put('holiday_region', $data['holiday_region'] ?? 'DE-SN');
         Setting::put('tracking_start', $data['tracking_start'] ?: null);
+        Setting::put('break_rules', \App\Models\Contract::normalizeBreakRules($data['break_rules'] ?? null));
         Setting::put('operator', [
             'name' => $data['operator_name'],
             'address' => $data['operator_address'],

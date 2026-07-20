@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Absence;
+use App\Models\Contract;
 use App\Models\Employee;
 use App\Models\Setting;
 use App\Models\UserLog;
@@ -21,25 +22,107 @@ use Carbon\CarbonInterface;
  *   vacation / special / sick -> credited the expected hours -> balance = worked
  *   unpaid                -> not owed -> expected 0, balance = worked
  *   overtime_reduction    -> drawn from overtime -> balance = worked - expected
+ *
+ * Break rules: the contract's staircase (or the global default) sets a minimum
+ * break per attendance length. Time the employee already stamped out for counts
+ * towards it, so only the missing remainder is deducted.
  */
 class WorktimeService
 {
-    /** Worked minutes the employee delivered on a date (completed logs).
-     *  Attributed by the `employee_id` stamped on each record at check-in, so a
-     *  later chip reassignment never moves historical time between accounts. */
+    /** Net worked minutes: stamped attendance minus the automatic break. */
     public function workedMinutes(Employee $employee, CarbonInterface $date): int
+    {
+        return $this->dayMinutes($employee, $date)['net'];
+    }
+
+    /**
+     * Break breakdown for one day: `gross` (stamped attendance), `stamped_break`
+     * (gaps between stampings), `break` (the automatic deduction on top) and
+     * `net` (gross - break). Attribution follows the `employee_id` stamped on
+     * each record at check-in, so a later chip reassignment never moves
+     * historical time between accounts.
+     *
+     * @return array{gross:int, stamped_break:int, break:int, net:int}
+     */
+    public function dayMinutes(Employee $employee, CarbonInterface $date): array
     {
         $logs = UserLog::where('employee_id', $employee->id)
             ->where('checkindate', $date->toDateString())
             ->where('card_out', 1)
             ->get();
 
-        $minutes = 0;
+        $spans = [];
+        $gross = 0;
         foreach ($logs as $log) {
-            $minutes += $this->logMinutes($log);
+            $minutes = $this->logMinutes($log);
+            if ($minutes <= 0) {
+                continue;
+            }
+            $start = $this->minutesOfDay($log->timein);
+            $spans[] = [$start, $start + $minutes];
+            $gross += $minutes;
         }
 
-        return $minutes;
+        $stamped = $this->gapMinutes($spans);
+        $rules = $employee->activeContractOn(Carbon::parse($date->toDateString()))?->breakRules()
+            ?? Contract::globalBreakRules();
+        $deduction = $this->breakDeduction($gross, $stamped, $rules);
+
+        return [
+            'gross' => $gross,
+            'stamped_break' => $stamped,
+            'break' => $deduction,
+            'net' => $gross - $deduction,
+        ];
+    }
+
+    /** Minutes the employee was stamped out between two stampings of the day. */
+    private function gapMinutes(array $spans): int
+    {
+        usort($spans, fn (array $a, array $b) => $a[0] <=> $b[0]);
+
+        $gaps = 0;
+        $previousEnd = null;
+        foreach ($spans as [$start, $end]) {
+            if ($previousEnd !== null && $start > $previousEnd) {
+                $gaps += $start - $previousEnd;
+            }
+            $previousEnd = max($previousEnd ?? $end, $end);
+        }
+
+        return $gaps;
+    }
+
+    /**
+     * Minutes to deduct on top of the break the employee already stamped.
+     *
+     * `$gross` is the stamped presence and already excludes the gaps, so the
+     * staircase is matched against it directly. The deduction is capped so a day
+     * can never be pushed below the threshold that triggered it — 6:15 presence
+     * becomes 6:00, not 5:45.
+     */
+    public function breakDeduction(int $gross, int $stampedBreak, array $rules): int
+    {
+        $required = 0;
+        $threshold = 0;
+        foreach ($rules as $rule) {
+            if ($gross > $rule['from_minutes']) {
+                $required = $rule['minutes'];
+                $threshold = $rule['from_minutes'];
+            }
+        }
+
+        $deduction = max(0, $required - $stampedBreak);
+
+        return min($deduction, max(0, $gross - $threshold));
+    }
+
+    /** Wall-clock minutes since midnight for a stored 'H:i:s' time. */
+    private function minutesOfDay(?string $time): int
+    {
+        $parts = explode(':', (string) $time);
+
+        return ((int) ($parts[0] ?? 0)) * 60 + ((int) ($parts[1] ?? 0));
     }
 
     private function logMinutes(UserLog $log): int
@@ -92,7 +175,8 @@ class WorktimeService
             return null;
         }
 
-        $worked = $this->workedMinutes($employee, $date);
+        $minutes = $this->dayMinutes($employee, $date);
+        $worked = $minutes['net'];
         $contract = $employee->activeContractOn($day);
         $absence = $this->approvedAbsenceOn($employee, $date);
 
@@ -120,7 +204,7 @@ class WorktimeService
         }
 
         // Drop completely empty days (no work, no Soll, no absence).
-        if ($worked === 0 && $storedExpected === 0 && $absence === null) {
+        if ($minutes['gross'] === 0 && $storedExpected === 0 && $absence === null) {
             WorkDay::where('employee_id', $employee->id)
                 ->where('work_date', $day->toDateString())->delete();
 
@@ -130,6 +214,8 @@ class WorktimeService
         return WorkDay::updateOrCreate(
             ['employee_id' => $employee->id, 'work_date' => $day->toDateString()],
             [
+                'gross_minutes' => $minutes['gross'],
+                'break_minutes' => $minutes['break'],
                 'worked_minutes' => $worked,
                 'expected_minutes' => $storedExpected,
                 'balance_minutes' => $balance,

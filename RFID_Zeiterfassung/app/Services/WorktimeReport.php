@@ -48,7 +48,7 @@ class WorktimeReport
             ->get()->groupBy(fn (UserLog $l) => substr((string) $l->checkindate, 0, 10));
 
         $weeks = [];
-        $monthSum = ['ist' => 0, 'soll' => 0, 'saldo' => 0];
+        $monthSum = ['ist' => 0, 'soll' => 0, 'saldo' => 0, 'pause' => 0];
         $absenceDays = [];
 
         for ($cursor = $displayStart->copy(); $cursor->lte($displayEnd); $cursor->addDay()) {
@@ -60,6 +60,7 @@ class WorktimeReport
             $ist = (int) ($wd->worked_minutes ?? 0);
             $soll = (int) ($wd->expected_minutes ?? 0);
             $saldo = (int) ($wd->balance_minutes ?? 0);
+            $pause = (int) ($wd->break_minutes ?? 0);
 
             $hint = '';
             if ($wd?->absence) {
@@ -77,6 +78,7 @@ class WorktimeReport
                 'in' => $logs ? $this->localTime($key, $logs->min('timein'), $tz) : '',
                 'out' => $logs ? $this->localTime($key, $logs->where('card_out', 1)->max('timeout'), $tz) : '',
                 'multiple' => $logs && $logs->count() > 1,
+                'pause' => $pause,
                 'ist' => $ist,
                 'soll' => $soll,
                 'saldo' => $saldo,
@@ -91,11 +93,13 @@ class WorktimeReport
             $weeks[$weekKey]['sum']['ist'] = ($weeks[$weekKey]['sum']['ist'] ?? 0) + $ist;
             $weeks[$weekKey]['sum']['soll'] = ($weeks[$weekKey]['sum']['soll'] ?? 0) + $soll;
             $weeks[$weekKey]['sum']['saldo'] = ($weeks[$weekKey]['sum']['saldo'] ?? 0) + $saldo;
+            $weeks[$weekKey]['sum']['pause'] = ($weeks[$weekKey]['sum']['pause'] ?? 0) + $pause;
 
             if ($inMonth) {
                 $monthSum['ist'] += $ist;
                 $monthSum['soll'] += $soll;
                 $monthSum['saldo'] += $saldo;
+                $monthSum['pause'] += $pause;
                 if ($wd?->absence) {
                     $absenceDays[$wd->absence->type] = ($absenceDays[$wd->absence->type] ?? 0) + 1;
                 }
