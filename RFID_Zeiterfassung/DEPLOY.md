@@ -40,31 +40,45 @@ Cron im Panel, Document-Root frei wählbar.
 ## Plesk konkret
 
 **Hosting-Einstellungen → Document Root:**
-`…/httpdocs/RFID_Zeiterfassung/public` (Pfad an euren Git-Zielordner anpassen).
+`…/arbeitszeit.kaffeeteam.de/RFID_Zeiterfassung/public` — auf den `public`-Ordner,
+**nicht** auf das Repo-Root (sonst lägen `.env`, `composer.json` und `storage/`
+im Web). Beim aktuellen Setup liegt der Git-Checkout direkt unter der Domain,
+nicht unter `httpdocs/`.
 
-**PHP-Version:** ≥ 8.2 für die Domain auswählen.
+**PHP-Version:** ≥ 8.2 für die Domain auswählen (produktiv läuft 8.4).
 
-**Git → „Zusätzliche Bereitstellungsaktionen"** (laufen nach jedem Pull im Repo-Root):
+**Git → „Zusätzliche Bereitstellungsaktionen"** — bewährte Fassung:
 
 ```sh
-set -e                     # ohne dies läuft die Kette nach einem Fehler weiter
-cd RFID_Zeiterfassung
-composer install --no-dev --optimize-autoloader --no-interaction
-php artisan migrate --force
-php artisan optimize:clear
-php artisan migrate:status | grep -i pending && echo "WARNUNG: offene Migrationen!" || true
+cd /var/www/vhosts/kaffeeteam.de/arbeitszeit.kaffeeteam.de/RFID_Zeiterfassung && /opt/plesk/php/8.4/bin/php /usr/lib/plesk-9.0/composer.phar install --no-dev --optimize-autoloader --no-interaction
+/opt/plesk/php/8.4/bin/php /var/www/vhosts/kaffeeteam.de/arbeitszeit.kaffeeteam.de/RFID_Zeiterfassung/artisan migrate --force
+/opt/plesk/php/8.4/bin/php /var/www/vhosts/kaffeeteam.de/arbeitszeit.kaffeeteam.de/RFID_Zeiterfassung/artisan optimize:clear
 ```
 
-> **`set -e` ist wichtig.** Die Schritte hängen voneinander ab: schlägt
-> `composer install` fehl (z. B. weil `composer.lock` eine neuere PHP-Version
-> verlangt als die Domain hat), läuft ohne `set -e` `migrate` trotzdem — oder die
-> Kette bricht still ab und die Migration wird übersprungen. Beides fällt erst
-> auf, wenn das Panel eine SQL-Exception wirft („Unknown column …"). Nach jedem
-> Deploy das Aktionsprotokoll in Plesk prüfen, nicht nur die Seite aufrufen.
+> **Jede Zeile muss für sich allein lauffähig sein.** Plesk führt die Zeilen in je
+> eigener Shell aus — Variablen, `cd` und `set -e` wirken *nicht* über das
+> Zeilenende hinaus. Ein Skript der Form `APP=…` / `cd $APP` / `composer install`
+> läuft deshalb ins Leere: die Variable ist in Zeile 2 schon wieder leer und
+> Composer sucht die `composer.json` im Domain-Root. Darum: absolute Pfade
+> überall, und wo ein Arbeitsverzeichnis nötig ist (nur Composer), `cd … && …` in
+> **derselben** Zeile. `artisan` braucht kein bestimmtes Arbeitsverzeichnis.
+
+> **Immer der volle PHP-Pfad, nie blankes `php`.** Im PATH der Bereitstellungs-
+> aktion kann eine Binary liegen, die das System nicht laden kann — Symptom:
+> `/lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.38' not found`. Über FPM
+> läuft die Domain dann trotzdem, nur der Deploy scheitert. Verfügbare Versionen:
+> `ls -d /opt/plesk/php/*/bin/php`.
 
 `migrate --force` ist ausdrücklich für nicht-interaktive Deploys gedacht (`--force`
 unterdrückt nur die Sicherheitsabfrage in Produktion, es erzwingt nichts anderes).
 Die Migrationen hier sind additiv und idempotent — ein erneuter Lauf ist folgenlos.
+
+> **Stille Bereitstellung heißt Erfolg.** Ohne Ausgabe hatte Composer nichts zu
+> tun und `migrate` ist durchgelaufen. Läuft der Deploy dagegen nur als Git-Pull
+> (Composer/Migrate scheitern), ist der Code neu und das Schema alt — die App
+> startet weiter, weil `vendor/` liegen bleibt, und der Fehler zeigt sich erst
+> beim Schreiben als „Unknown column …". Nach Schema-Änderungen deshalb einmal
+> `artisan migrate:status` prüfen, statt nur die Seite aufzurufen.
 
 Optional danach (Performance; nur wenn `.env` stabil ist — bei `.env`-Änderung
 greift beim nächsten Deploy automatisch wieder `optimize:clear`):
@@ -76,10 +90,14 @@ php artisan view:cache
 php artisan filament:cache-components
 ```
 
-> Findet Plesk `php`/`composer` nicht, den vollen Pfad der Domain-PHP nutzen, z. B.
-> `/opt/plesk/php/8.2/bin/php artisan migrate --force` und Composer über
-> `/opt/plesk/php/8.2/bin/php /usr/lib/plesk-9.0/composer.phar install …`
-> (oder Composer über die Plesk-Composer-Oberfläche ausführen).
+> Composer lässt sich alternativ über die **Plesk-Composer-Oberfläche** fahren.
+> Dort als Verzeichnis `RFID_Zeiterfassung` angeben, nicht das Domain-Root —
+> sonst: „Composer could not find a composer.json file".
+
+> **Einzelne Befehle ohne SSH** (z. B. `migrate` nachziehen, wenn ein Deploy
+> ausgefallen ist): Plesk → *Geplante Aufgaben* → „Befehl ausführen", einmal
+> laufen lassen, Ausgabe ansehen, Aufgabe löschen. Läuft nicht im Chroot und
+> braucht keinen freigegebenen SSH-Zugang.
 
 **`.env` vor dem ersten Deploy** per Dateimanager anlegen (aus
 `.env.production.example`) — sonst schlägt `migrate` beim ersten Lauf fehl.
