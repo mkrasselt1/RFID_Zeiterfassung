@@ -5,7 +5,10 @@ namespace Tests\Feature;
 use App\Models\Absence;
 use App\Models\Contract;
 use App\Models\Employee;
+use App\Models\Setting;
 use App\Models\UserLog;
+use App\Services\BalanceFormat;
+use App\Services\WorktimeReport;
 use App\Services\WorktimeService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -22,6 +25,8 @@ class PanelSmokeTest extends TestCase
         // The holiday lookup caches statically; reset it so DB rollbacks between
         // tests can't leak holidays into an unrelated test.
         \App\Models\Holiday::flushCache();
+        // Same for the memoized balance format.
+        \App\Services\BalanceFormat::forget();
     }
 
     private function makeEmployee(string $role = Employee::ROLE_EMPLOYEE, string $email = 'e@example.de'): Employee
@@ -229,6 +234,54 @@ class PanelSmokeTest extends TestCase
             'Toleranz 0 schaltet ab' => [1, 0, 1],
             'größere Toleranz' => [-14, 15, 0],
         ];
+    }
+
+    /**
+     * The operator picks how balances read; the same minutes render three ways.
+     *
+     * @dataProvider balanceFormatCases
+     */
+    public function test_balance_format_follows_the_setting(string $format, int $minutes, string $expected): void
+    {
+        Setting::put('overtime_format', $format);
+        BalanceFormat::forget();
+
+        $this->assertSame($expected, BalanceFormat::make($minutes));
+    }
+
+    public static function balanceFormatCases(): array
+    {
+        return [
+            'dezimal: 90 min sind anderthalb Stunden' => [BalanceFormat::DECIMAL, 90, '1,5 h'],
+            'dezimal: glatte Werte bleiben glatt' => [BalanceFormat::DECIMAL, 480, '8 h'],
+            'dezimal: zwei Stellen halten die Minute' => [BalanceFormat::DECIMAL, 14, '0,23 h'],
+            'dezimal: Vorzeichen bleibt' => [BalanceFormat::DECIMAL, -90, '-1,5 h'],
+            'dezimal: Null' => [BalanceFormat::DECIMAL, 0, '0 h'],
+            'hhmm' => [BalanceFormat::HHMM, 90, '1:30'],
+            'hhmm: Vorzeichen bleibt' => [BalanceFormat::HHMM, -90, '-1:30'],
+            'hhmm: Null' => [BalanceFormat::HHMM, 0, '0:00'],
+            'minuten' => [BalanceFormat::MINUTES, 90, '90 min'],
+            'minuten: Tausenderpunkt' => [BalanceFormat::MINUTES, 1234, '1.234 min'],
+            'minuten: Vorzeichen bleibt' => [BalanceFormat::MINUTES, -90, '-90 min'],
+            'unbekannter Wert faellt auf den Standard zurueck' => ['bogus', 90, '1,5 h'],
+        ];
+    }
+
+    /** Without the setting written, balances read as decimal hours. */
+    public function test_balance_format_defaults_to_decimal_hours(): void
+    {
+        $this->assertSame(BalanceFormat::DECIMAL, BalanceFormat::current());
+        $this->assertSame('1,5 h', BalanceFormat::make(90));
+    }
+
+    /** Ist/Soll/Pause are spans, not deviations — the setting must not touch them. */
+    public function test_hhmm_stays_hhmm_whatever_the_setting_says(): void
+    {
+        Setting::put('overtime_format', BalanceFormat::MINUTES);
+        BalanceFormat::forget();
+
+        $this->assertSame('8:00', WorktimeReport::hhmm(480));
+        $this->assertSame('480 min', WorktimeReport::saldo(480));
     }
 
     /**

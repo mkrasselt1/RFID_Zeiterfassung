@@ -144,25 +144,15 @@ class WorktimeReport
         return substr((string) $time, 0, 5);
     }
 
-    /** Format signed minutes as "8:00" / "-1:30". */
+    /** Ist/Soll/Pause are always h:mm; balances go through BalanceFormat. */
     public static function hhmm(int $minutes): string
     {
-        $sign = $minutes < 0 ? '-' : '';
-        $minutes = abs($minutes);
-
-        return sprintf('%s%d:%02d', $sign, intdiv($minutes, 60), $minutes % 60);
+        return BalanceFormat::hhmm($minutes);
     }
 
-    /**
-     * Format signed minutes as decimal hours, e.g. "1,5 h" / "-0,25 h" / "8 h".
-     *
-     * Nachkommastellen fallen weg, sobald sie nichts mehr aussagen (8,00 -> 8),
-     * sonst runden zwei Stellen auf die Minute genau (14 min -> 0,23 h).
-     */
-    public static function hours(int $minutes): string
+    /** Render a signed balance in the operator's configured format. */
+    public static function saldo(int $minutes): string
     {
-        $value = number_format($minutes / 60, 2, ',', '.');
-
-        return rtrim(rtrim($value, '0'), ',').' h';
+        return BalanceFormat::make($minutes);
     }
 }

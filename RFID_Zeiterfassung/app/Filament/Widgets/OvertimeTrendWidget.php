@@ -5,14 +5,19 @@ namespace App\Filament\Widgets;
 use App\Models\Employee;
 use App\Models\Setting;
 use App\Models\WorkDay;
+use App\Services\BalanceFormat;
 use Carbon\Carbon;
 use Filament\Widgets\ChartWidget;
 use Filament\Widgets\Concerns\InteractsWithPageFilters;
 
 /**
- * Cumulative overtime balance (hours) over the last 12 months for the selected
- * employee (dashboard filter for managers, else self), starting from the
- * carried-over balance before the window.
+ * Cumulative overtime balance over the last 12 months for the selected employee
+ * (dashboard filter for managers, else self), starting from the carried-over
+ * balance before the window.
+ *
+ * Achsen brauchen Zahlen, keine formatierten Strings — die Einstellung wählt
+ * daher nur die Einheit: Minuten, sonst Stunden (h:mm hat auf einer linearen
+ * Achse keine sinnvolle Entsprechung).
  */
 class OvertimeTrendWidget extends ChartWidget
 {
@@ -43,6 +48,8 @@ class OvertimeTrendWidget extends ChartWidget
         $windowStart = Carbon::now()->startOfMonth()->subMonths(11);
         $cumulative = (int) $base()->where('work_date', '<', $windowStart->toDateString())->sum('balance_minutes');
 
+        $inMinutes = BalanceFormat::current() === BalanceFormat::MINUTES;
+
         $labels = [];
         $values = [];
         $cursor = $windowStart->copy();
@@ -51,13 +58,13 @@ class OvertimeTrendWidget extends ChartWidget
                 ->whereBetween('work_date', [$cursor->copy()->startOfMonth()->toDateString(), $cursor->copy()->endOfMonth()->toDateString()])
                 ->sum('balance_minutes');
             $labels[] = $cursor->translatedFormat('M y');
-            $values[] = round($cumulative / 60, 1);
+            $values[] = $inMinutes ? $cumulative : round($cumulative / 60, 1);
             $cursor->addMonth();
         }
 
         return [
             'datasets' => [[
-                'label' => 'Saldo (h)',
+                'label' => $inMinutes ? 'Saldo (min)' : 'Saldo (h)',
                 'data' => $values,
                 'borderColor' => '#f59e0b',
                 'backgroundColor' => 'rgba(245, 158, 11, 0.2)',

@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Filament\Concerns\ManagerOnly;
 use App\Models\Setting;
+use App\Services\BalanceFormat;
 use App\Services\GoogleCalendarApi;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
@@ -50,6 +51,7 @@ class ManageSettings extends Page implements HasForms
             'timezone' => Setting::get('timezone', 'Europe/Berlin'),
             'holiday_region' => Setting::get('holiday_region', 'DE-SN'),
             'tracking_start' => Setting::get('tracking_start'),
+            'overtime_format' => BalanceFormat::current(),
             'break_rules' => \App\Models\Contract::globalBreakRules(),
             'balance_tolerance_minutes' => \App\Models\Contract::globalBalanceTolerance(),
             'operator_name' => $operator['name'] ?? '',
@@ -85,6 +87,13 @@ class ManageSettings extends Page implements HasForms
                         \Filament\Forms\Components\DatePicker::make('tracking_start')
                             ->label('Zeiterfassung aktiv ab')
                             ->helperText('Tage vor diesem Datum bauen kein Soll/Saldo (z. B. Go-Live der Stempeluhren). Leer = keine Grenze.'),
+                        \Filament\Forms\Components\Select::make('overtime_format')
+                            ->label('Anzeige der Überstunden')
+                            ->options(BalanceFormat::FORMATS)
+                            ->selectablePlaceholder(false)
+                            ->required()
+                            ->helperText('Gilt für alle Saldo-Werte: Dashboard, Arbeitszeitkonto, '
+                                .'Monatsbericht, PDF und CSV-Export. Ist, Soll und Pause bleiben h:mm.'),
                     ])->columns(2),
                 Section::make('Toleranz')
                     ->description('Kleine Tagesabweichungen sollen sich nicht zu einem Saldo '
@@ -152,6 +161,10 @@ class ManageSettings extends Page implements HasForms
         Setting::put('timezone', $data['timezone']);
         Setting::put('holiday_region', $data['holiday_region'] ?? 'DE-SN');
         Setting::put('tracking_start', $data['tracking_start'] ?: null);
+        Setting::put('overtime_format', $data['overtime_format'] ?? BalanceFormat::DEFAULT);
+        // Das Format ist pro Request gemerkt — sonst zeigt die Seite nach dem
+        // Speichern noch die alte Schreibweise.
+        BalanceFormat::forget();
         Setting::put('break_rules', \App\Models\Contract::normalizeBreakRules($data['break_rules'] ?? null));
         Setting::put('balance_tolerance_minutes', max(0, (int) ($data['balance_tolerance_minutes'] ?? 0)));
         Setting::put('operator', [

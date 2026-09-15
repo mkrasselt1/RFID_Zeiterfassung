@@ -5,6 +5,7 @@ namespace App\Filament\Widgets;
 use App\Filament\Resources\WorkDayResource;
 use App\Models\Absence;
 use App\Models\Employee;
+use App\Services\BalanceFormat;
 use App\Services\WorktimeService;
 use Carbon\Carbon;
 use Filament\Widgets\Concerns\InteractsWithPageFilters;
@@ -51,7 +52,7 @@ class MyStatsWidget extends StatsOverviewWidget
 
         $stats = [
             Stat::make('Resturlaub ' . now()->year, number_format($employee->vacationBalance(now()->year), 1) . ' Tage'),
-            Stat::make('Überstunden-Saldo', WorkDayResource::hours($employee->overtimeBalanceMinutes())),
+            Stat::make('Überstunden-Saldo', BalanceFormat::make($employee->overtimeBalanceMinutes())),
             Stat::make('Diese Woche', WorkDayResource::hhmm($weekWorked) . ' / ' . WorkDayResource::hhmm($weekExpected) . ' h')
                 ->description('Ist / Soll'),
         ];
