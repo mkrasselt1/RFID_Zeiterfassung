@@ -42,6 +42,19 @@ class WorkDayResource extends Resource
         return sprintf('%s%d:%02d', $sign, intdiv($minutes, 60), $minutes % 60);
     }
 
+    /**
+     * Format signed minutes as decimal hours, e.g. "1,5 h" / "-0,25 h" / "8 h".
+     *
+     * Nachkommastellen fallen weg, sobald sie nichts mehr aussagen (8,00 -> 8),
+     * sonst runden zwei Stellen auf die Minute genau (14 min -> 0,23 h).
+     */
+    public static function hours(int $minutes): string
+    {
+        $value = number_format($minutes / 60, 2, ',', '.');
+
+        return rtrim(rtrim($value, '0'), ',').' h';
+    }
+
     public static function table(Table $table): Table
     {
         $isManager = fn () => auth()->user()?->canManagePeople() ?? false;
@@ -65,10 +78,10 @@ class WorkDayResource extends Resource
                     ->formatStateUsing(fn (int $state) => static::hhmm($state))
                     ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
                 Tables\Columns\TextColumn::make('balance_minutes')->label('Saldo')
-                    ->formatStateUsing(fn (int $state) => static::hhmm($state))
+                    ->formatStateUsing(fn (int $state) => static::hours($state))
                     ->color(fn (int $state) => $state < 0 ? 'danger' : ($state > 0 ? 'success' : 'gray'))
                     ->weight('bold')
-                    ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hhmm((int) $state))),
+                    ->summarize(Sum::make()->formatStateUsing(fn ($state) => static::hours((int) $state))),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('employee_id')->label('Mitarbeiter')
@@ -152,7 +165,7 @@ class WorkDayResource extends Resource
                     static::hhmm((int) $r->break_minutes),
                     static::hhmm((int) $r->worked_minutes),
                     static::hhmm((int) $r->expected_minutes),
-                    static::hhmm((int) $r->balance_minutes),
+                    static::hours((int) $r->balance_minutes),
                 ]);
             }
             fclose($out);

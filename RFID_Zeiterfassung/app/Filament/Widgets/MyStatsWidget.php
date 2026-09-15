@@ -51,7 +51,7 @@ class MyStatsWidget extends StatsOverviewWidget
 
         $stats = [
             Stat::make('Resturlaub ' . now()->year, number_format($employee->vacationBalance(now()->year), 1) . ' Tage'),
-            Stat::make('Überstunden-Saldo', WorkDayResource::hhmm($employee->overtimeBalanceMinutes()) . ' h'),
+            Stat::make('Überstunden-Saldo', WorkDayResource::hours($employee->overtimeBalanceMinutes())),
             Stat::make('Diese Woche', WorkDayResource::hhmm($weekWorked) . ' / ' . WorkDayResource::hhmm($weekExpected) . ' h')
                 ->description('Ist / Soll'),
         ];

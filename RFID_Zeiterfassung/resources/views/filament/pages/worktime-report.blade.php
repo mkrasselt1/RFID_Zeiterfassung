@@ -14,7 +14,7 @@
             // Vorzeichen trägt die Richtung, die Farbe verstärkt sie nur —
             // ein Saldo ist nie allein über Farbe lesbar.
             $saldo = fn (int $v) => [
-                'value' => R::hhmm($v),
+                'value' => R::hours($v),
                 'color' => $v < 0 ? '#d03b3b' : ($v > 0 ? '#0ca30c' : ''),
             ];
             $absences = collect($r['absence_days'])
@@ -74,7 +74,7 @@
                             $bg = $row['toleriert']
                                 ? '#f3f4f6'
                                 : ($row['saldo'] >= 0 ? '#dcfce7' : '#fee2e2');     // grün / rot
-                            $note = \App\Services\WorktimeReport::hhmm($row['saldo_roh']);
+                            $note = \App\Services\WorktimeReport::hours($row['saldo_roh']);
                         }
                     @endphp
                     <div style="background:{{ $bg }};color:{{ $fg }};opacity:{{ $opacity }};border-radius:6px;padding:6px 4px;min-height:46px;font-size:11px;">
@@ -125,8 +125,8 @@
                                 <td class="py-1 px-2 text-right">{{ $row['soll'] ? R::hhmm($row['soll']) : '' }}</td>
                                 <td class="py-1 px-2 text-right"
                                     style="{{ $row['saldo'] < 0 ? 'color:#d03b3b;' : ($row['saldo'] > 0 ? 'color:#0ca30c;' : '') }}">
-                                    {{ ($row['ist'] || $row['soll']) ? R::hhmm($row['saldo']) : '' }}@if($row['toleriert'])<span
-                                        style="opacity:.55;font-size:11px;" title="Abweichung {{ R::hhmm($row['saldo_roh']) }} liegt unter der Toleranz">°</span>@endif
+                                    {{ ($row['ist'] || $row['soll']) ? R::hours($row['saldo']) : '' }}@if($row['toleriert'])<span
+                                        style="opacity:.55;font-size:11px;" title="Abweichung {{ R::hours($row['saldo_roh']) }} liegt unter der Toleranz">°</span>@endif
                                 </td>
                                 <td class="py-1 px-2 text-gray-500">{{ $row['hint'] }}</td>
                             </tr>
@@ -136,7 +136,7 @@
                             <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['pause']) }}</td>
                             <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['ist']) }}</td>
                             <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['soll']) }}</td>
-                            <td class="py-1 px-2 text-right">{{ R::hhmm($week['sum']['saldo']) }}</td>
+                            <td class="py-1 px-2 text-right">{{ R::hours($week['sum']['saldo']) }}</td>
                             <td></td>
                         </tr>
                     </tbody>

@@ -152,4 +152,17 @@ class WorktimeReport
 
         return sprintf('%s%d:%02d', $sign, intdiv($minutes, 60), $minutes % 60);
     }
+
+    /**
+     * Format signed minutes as decimal hours, e.g. "1,5 h" / "-0,25 h" / "8 h".
+     *
+     * Nachkommastellen fallen weg, sobald sie nichts mehr aussagen (8,00 -> 8),
+     * sonst runden zwei Stellen auf die Minute genau (14 min -> 0,23 h).
+     */
+    public static function hours(int $minutes): string
+    {
+        $value = number_format($minutes / 60, 2, ',', '.');
+
+        return rtrim(rtrim($value, '0'), ',').' h';
+    }
 }
