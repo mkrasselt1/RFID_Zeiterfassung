@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Pages\WorktimeReportPage;
 use App\Filament\Resources\WorkDayResource\Pages;
+use App\Models\BalanceAdjustment;
 use App\Models\Employee;
 use App\Models\WorkDay;
 use App\Services\BalanceFormat;
@@ -46,6 +47,18 @@ class WorkDayResource extends Resource
 
         return $table
             ->defaultSort('period', 'desc')
+            // Diese Tabelle ist das reine Arbeitszeitkonto. Saldo-Korrekturen
+            // stehen bewusst daneben, sonst wäre nicht mehr zu sehen, was
+            // gestempelt und was gebucht wurde — die Summe hier weicht dann
+            // aber vom Zähler im Dashboard ab, und das gehört dazugesagt.
+            ->description(fn () => BalanceAdjustment::query()
+                ->when(! (auth()->user()?->canManagePeople() ?? false),
+                    fn ($q) => $q->where('employee_id', auth()->id()))
+                ->exists()
+                    ? 'Manuelle Saldo-Korrekturen sind hier nicht enthalten — die Summe zeigt '
+                        .'allein die erfassten Zeiten. Der Zähler im Dashboard rechnet beides '
+                        .'zusammen; die Korrekturen stehen beim Mitarbeiter.'
+                    : null)
             ->columns([
                 Tables\Columns\TextColumn::make('period')->label('Monat')->sortable()
                     ->formatStateUsing(fn (?string $state) => $state

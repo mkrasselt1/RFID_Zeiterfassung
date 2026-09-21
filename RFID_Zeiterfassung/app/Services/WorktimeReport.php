@@ -124,9 +124,15 @@ class WorktimeReport
             $asOf = Carbon::now()->startOfDay();
         }
 
-        $carryover = (int) $base()->where('work_date', '<', "{$year}-01-01")->sum('balance_minutes');
+        $yearStart = Carbon::create($year, 1, 1)->startOfDay();
+
+        // Manuelle Korrekturen zählen wie Ledger-Tage, nur zu ihrem Buchungstag:
+        // eine Bereinigung zum 1. Januar landet im neuen Jahr, nicht im Übertrag.
+        $carryover = (int) $base()->where('work_date', '<', "{$year}-01-01")->sum('balance_minutes')
+            + $employee->balanceAdjustmentMinutes(null, $yearStart->copy()->subDay());
         $yearBalance = (int) $base()
-            ->whereBetween('work_date', ["{$year}-01-01", $asOf->toDateString()])->sum('balance_minutes');
+            ->whereBetween('work_date', ["{$year}-01-01", $asOf->toDateString()])->sum('balance_minutes')
+            + $employee->balanceAdjustmentMinutes($yearStart, $asOf);
 
         return [
             'employee' => $employee,

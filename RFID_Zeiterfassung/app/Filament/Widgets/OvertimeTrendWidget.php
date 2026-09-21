@@ -46,7 +46,8 @@ class OvertimeTrendWidget extends ChartWidget
             ->when($goLive, fn ($q) => $q->where('work_date', '>=', $goLive));
 
         $windowStart = Carbon::now()->startOfMonth()->subMonths(11);
-        $cumulative = (int) $base()->where('work_date', '<', $windowStart->toDateString())->sum('balance_minutes');
+        $cumulative = (int) $base()->where('work_date', '<', $windowStart->toDateString())->sum('balance_minutes')
+            + $employee->balanceAdjustmentMinutes(null, $windowStart->copy()->subDay());
 
         $inMinutes = BalanceFormat::current() === BalanceFormat::MINUTES;
 
@@ -56,7 +57,8 @@ class OvertimeTrendWidget extends ChartWidget
         for ($i = 0; $i < 12; $i++) {
             $cumulative += (int) $base()
                 ->whereBetween('work_date', [$cursor->copy()->startOfMonth()->toDateString(), $cursor->copy()->endOfMonth()->toDateString()])
-                ->sum('balance_minutes');
+                ->sum('balance_minutes')
+                + $employee->balanceAdjustmentMinutes($cursor->copy()->startOfMonth(), $cursor->copy()->endOfMonth());
             $labels[] = $cursor->translatedFormat('M y');
             $values[] = $inMinutes ? $cumulative : round($cumulative / 60, 1);
             $cursor->addMonth();

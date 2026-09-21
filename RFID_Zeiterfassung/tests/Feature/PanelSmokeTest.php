@@ -437,6 +437,153 @@ class PanelSmokeTest extends TestCase
         $this->assertSame(120, $september['year_balance'], 'bis heute gerechnet ist er dabei');
     }
 
+    private function bookAdjustment(Employee $employee, string $date, int $minutes, ?string $note = null): void
+    {
+        \App\Models\BalanceAdjustment::create([
+            'employee_id' => $employee->id,
+            'effective_date' => $date,
+            'minutes' => $minutes,
+            'note' => $note,
+        ]);
+    }
+
+    /** A worked day plus a correction booked alongside it. */
+    private function employeeWithLedgerDay(int $balanceMinutes, string $date = '2026-06-15'): Employee
+    {
+        $employee = $this->makeEmployee();
+        $employee->workDays()->create([
+            'work_date' => $date, 'period' => substr($date, 0, 7),
+            'worked_minutes' => 480 + $balanceMinutes, 'expected_minutes' => 480,
+            'balance_minutes' => $balanceMinutes, 'raw_balance_minutes' => $balanceMinutes,
+            'break_minutes' => 0,
+        ]);
+
+        return $employee;
+    }
+
+    /** Corrections move the counter without touching the ledger. */
+    public function test_balance_adjustment_shifts_the_overtime_counter(): void
+    {
+        $employee = $this->employeeWithLedgerDay(600);
+        $this->assertSame(600, $employee->overtimeBalanceMinutes());
+
+        $this->bookAdjustment($employee, '2026-07-01', -600, 'Altbestand bereinigt');
+
+        $this->assertSame(0, $employee->fresh()->overtimeBalanceMinutes());
+        $this->assertSame(1, $employee->workDays()->count(), 'das Arbeitszeitkonto bleibt unangetastet');
+        $this->assertSame(600, (int) $employee->workDays()->sum('balance_minutes'));
+    }
+
+    /** The cut-off applies to corrections too, so a report shows the state of its month. */
+    public function test_balance_adjustment_respects_the_cut_off(): void
+    {
+        $employee = $this->employeeWithLedgerDay(600, '2026-02-16');
+        $this->bookAdjustment($employee, '2026-07-01', -600);
+
+        $this->assertSame(600, $employee->overtimeBalanceMinutes(Carbon::parse('2026-04-30')));
+        $this->assertSame(0, $employee->overtimeBalanceMinutes(Carbon::parse('2026-08-31')));
+    }
+
+    /**
+     * "Set the balance" books the difference against the current state, so
+     * running it twice must not deduct twice.
+     */
+    public function test_setting_the_balance_twice_does_not_deduct_twice(): void
+    {
+        $employee = $this->employeeWithLedgerDay(600);
+        $asOf = Carbon::parse('2026-12-31');
+
+        $delta = 0 - $employee->overtimeBalanceMinutes($asOf);
+        $this->bookAdjustment($employee, $asOf->toDateString(), $delta);
+        $this->assertSame(0, $employee->fresh()->overtimeBalanceMinutes($asOf));
+
+        // Zweiter Lauf: die Differenz ist jetzt 0, es darf nichts mehr gebucht werden.
+        $this->assertSame(0, 0 - $employee->fresh()->overtimeBalanceMinutes($asOf));
+    }
+
+    /** The employee edit page renders with the corrections tab attached. */
+    public function test_employee_page_renders_with_the_adjustments_tab(): void
+    {
+        $this->seed();
+        $admin = Employee::where('email', 'admin@example.de')->first();
+        $employee = Employee::where('email', 'max@example.de')->first();
+        $this->bookAdjustment($employee, '2026-01-01', -1_200, 'Altbestand bereinigt');
+
+        $this->actingAs($admin)
+            ->get('/admin/employees/'.$employee->id.'/edit')
+            ->assertSuccessful();
+
+        \Livewire\Livewire::actingAs($admin)
+            ->test(\App\Filament\Resources\EmployeeResource\RelationManagers\BalanceAdjustmentsRelationManager::class, [
+                'ownerRecord' => $employee,
+                'pageClass' => \App\Filament\Resources\EmployeeResource\Pages\EditEmployee::class,
+            ])
+            ->assertSuccessful()
+            ->assertSee('Altbestand bereinigt');
+    }
+
+    /**
+     * The "Saldo setzen" button through the actual UI: it books the difference,
+     * and running it a second time books nothing because there is none left.
+     */
+    public function test_set_balance_action_books_the_difference_once(): void
+    {
+        $admin = $this->makeEmployee(Employee::ROLE_ADMIN, 'boss@example.de');
+        $employee = $this->employeeWithLedgerDay(1_200, '2026-06-15');
+
+        $run = fn () => \Livewire\Livewire::actingAs($admin)
+            ->test(\App\Filament\Resources\EmployeeResource\RelationManagers\BalanceAdjustmentsRelationManager::class, [
+                'ownerRecord' => $employee,
+                'pageClass' => \App\Filament\Resources\EmployeeResource\Pages\EditEmployee::class,
+            ])
+            ->callTableAction('setBalance', data: [
+                'effective_date' => '2026-12-31',
+                'minutes' => 0,
+                'note' => 'Altbestand bereinigt',
+            ])
+            ->assertHasNoTableActionErrors();
+
+        $run();
+        $this->assertSame(1, $employee->balanceAdjustments()->count());
+        $this->assertSame(-1_200, (int) $employee->balanceAdjustments()->sum('minutes'));
+        $this->assertSame(0, $employee->fresh()->overtimeBalanceMinutes());
+        $this->assertSame($admin->id, $employee->balanceAdjustments()->first()->created_by);
+
+        $run();
+        $this->assertSame(1, $employee->balanceAdjustments()->count(), 'kein zweiter Abzug');
+        $this->assertSame(0, $employee->fresh()->overtimeBalanceMinutes());
+    }
+
+    /** A correction booked on January 1st belongs to the new year, not the carryover. */
+    public function test_new_year_correction_lands_in_the_new_year_not_the_carryover(): void
+    {
+        $this->travelTo(Carbon::parse('2027-03-15 12:00:00'));
+
+        $employee = $this->employeeWithLedgerDay(600, '2026-06-15');
+        $this->bookAdjustment($employee, '2027-01-01', -600, 'Altbestand bereinigt');
+
+        $report = app(WorktimeReport::class)->forMonth($employee, 2027, 3);
+
+        $this->assertSame(600, $report['carryover'], 'das Vorjahr bleibt, wie es war');
+        $this->assertSame(-600, $report['year_balance'], 'die Bereinigung zählt ins neue Jahr');
+        $this->assertSame(0, $report['total_balance']);
+    }
+
+    /** Booked on December 31st it belongs to the old year instead. */
+    public function test_year_end_correction_lands_in_the_carryover(): void
+    {
+        $this->travelTo(Carbon::parse('2027-03-15 12:00:00'));
+
+        $employee = $this->employeeWithLedgerDay(600, '2026-06-15');
+        $this->bookAdjustment($employee, '2026-12-31', -600);
+
+        $report = app(WorktimeReport::class)->forMonth($employee, 2027, 3);
+
+        $this->assertSame(0, $report['carryover']);
+        $this->assertSame(0, $report['year_balance']);
+        $this->assertSame(0, $report['total_balance']);
+    }
+
     /**
      * @dataProvider dayFormatCases
      */

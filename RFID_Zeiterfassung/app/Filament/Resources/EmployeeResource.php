@@ -117,6 +117,7 @@ class EmployeeResource extends Resource
             RelationManagers\CardsRelationManager::class,
             RelationManagers\ContractsRelationManager::class,
             RelationManagers\AbsencesRelationManager::class,
+            RelationManagers\BalanceAdjustmentsRelationManager::class,
         ];
     }
 

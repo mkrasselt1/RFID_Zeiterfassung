@@ -58,6 +58,11 @@ class Employee extends Authenticatable implements FilamentUser, HasName
         return $this->hasMany(WorkDay::class);
     }
 
+    public function balanceAdjustments(): HasMany
+    {
+        return $this->hasMany(BalanceAdjustment::class);
+    }
+
     public function supervisor(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'supervisor_id');
@@ -181,15 +186,38 @@ class Employee extends Authenticatable implements FilamentUser, HasName
         return $this->countAbsenceDays(Absence::TYPE_SPECIAL, $year, $until);
     }
 
-    /** Net overtime in minutes across the ledger (from the go-live cut-off, if set). */
-    public function overtimeBalanceMinutes(): int
+    /**
+     * Net overtime in minutes: the ledger (from the go-live cut-off, if set)
+     * plus any manual corrections booked alongside it.
+     */
+    public function overtimeBalanceMinutes(?Carbon $until = null): int
     {
-        $query = $this->workDays();
-        if ($start = Setting::get('tracking_start')) {
-            $query->where('work_date', '>=', $start);
-        }
+        $start = Setting::get('tracking_start');
 
-        return (int) $query->sum('balance_minutes');
+        $ledger = $this->workDays()
+            ->when($start, fn ($q) => $q->where('work_date', '>=', $start))
+            ->when($until, fn ($q) => $q->whereDate('work_date', '<=', $until->toDateString()))
+            ->sum('balance_minutes');
+
+        return (int) $ledger + $this->balanceAdjustmentMinutes(null, $until);
+    }
+
+    /**
+     * Manual corrections within an optional date window (inclusive).
+     *
+     * Der Go-Live-Stichtag gilt hier nicht: eine Korrektur wird bewusst zu
+     * ihrem Datum gebucht und soll nicht davon abhängen, ob die Stempeluhren
+     * damals schon liefen — genau dafür ist sie da.
+     */
+    public function balanceAdjustmentMinutes(?Carbon $from = null, ?Carbon $until = null): int
+    {
+        // whereDate, nicht where: effective_date trägt den date-Cast und landet
+        // als "2026-12-31 00:00:00" in der Spalte — ein String-Vergleich gegen
+        // "2026-12-31" verlöre ausgerechnet den Stichtag selbst.
+        return (int) $this->balanceAdjustments()
+            ->when($from, fn ($q) => $q->whereDate('effective_date', '>=', $from->toDateString()))
+            ->when($until, fn ($q) => $q->whereDate('effective_date', '<=', $until->toDateString()))
+            ->sum('minutes');
     }
 
     // --- Filament --------------------------------------------------------
