@@ -48,7 +48,7 @@ class AbsenceUi
             Tables\Columns\TextColumn::make('start_date')->label('Von')->date('d.m.Y')->sortable(),
             Tables\Columns\TextColumn::make('end_date')->label('Bis')->date('d.m.Y'),
             Tables\Columns\TextColumn::make('days')->label('Tage')
-                ->state(fn (Absence $r) => $r->dayCount()),
+                ->state(fn (Absence $r) => Absence::formatDays($r->dayCount())),
             Tables\Columns\TextColumn::make('status')->label('Status')->badge()
                 ->formatStateUsing(fn (string $state) => Absence::STATUSES[$state] ?? $state)
                 ->color(fn (string $state) => match ($state) {

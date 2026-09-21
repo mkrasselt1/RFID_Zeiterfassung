@@ -106,31 +106,64 @@ class Employee extends Authenticatable implements FilamentUser, HasName
             ->first();
     }
 
-    /** Remaining vacation days for a year: entitlement minus approved vacation. */
-    public function vacationBalance(int $year): float
+    /**
+     * Contracted vacation days for a year, or null when none is on file.
+     *
+     * Maßgeblich ist der zuletzt im Jahr gültige Vertrag — ein Stichtag mitten
+     * im Jahr würde jeden übersehen, der später eintritt oder früher geht.
+     * `null` heißt "nicht gepflegt" und ist bewusst nicht 0: daraus einen
+     * Anspruch von null Tagen zu machen, ließe den Resturlaub ins Minus laufen.
+     */
+    public function vacationEntitlement(int $year): ?float
     {
-        $contract = $this->activeContractOn(Carbon::create($year, 6, 1));
-        $entitlement = (float) ($contract?->vacation_days_per_year ?? 0);
+        $contract = $this->contracts()
+            ->whereDate('valid_from', '<=', Carbon::create($year, 12, 31)->toDateString())
+            ->where(function ($q) use ($year) {
+                $q->whereNull('valid_to')
+                    ->orWhereDate('valid_to', '>=', Carbon::create($year, 1, 1)->toDateString());
+            })
+            ->orderByDesc('valid_from')
+            ->first();
 
-        $taken = $this->absences()
+        return $contract?->vacation_days_per_year === null
+            ? null
+            : (float) $contract->vacation_days_per_year;
+    }
+
+    /** Approved vacation days taken in a year. */
+    public function vacationTaken(int $year): float
+    {
+        return $this->countAbsenceDays(Absence::TYPE_VACATION, $year);
+    }
+
+    /**
+     * Approved days of one absence type in a year.
+     *
+     * dayCount() fragt den Mitarbeiter nach seinen Arbeitstagen — der steht hier
+     * schon fest, also wird er gesetzt statt pro Antrag nachgeladen.
+     */
+    protected function countAbsenceDays(string $type, int $year): float
+    {
+        return $this->absences()
             ->approved()
-            ->where('type', Absence::TYPE_VACATION)
+            ->where('type', $type)
             ->whereYear('start_date', $year)
             ->get()
-            ->sum(fn (Absence $a) => $a->dayCount());
+            ->sum(fn (Absence $a) => $a->setRelation('employee', $this)->dayCount());
+    }
 
-        return $entitlement - $taken;
+    /** Remaining vacation days, or null when no entitlement is on file. */
+    public function vacationBalance(int $year): ?float
+    {
+        $entitlement = $this->vacationEntitlement($year);
+
+        return $entitlement === null ? null : $entitlement - $this->vacationTaken($year);
     }
 
     /** Approved special-leave days taken in a year (does not draw from vacation). */
     public function specialLeaveTaken(int $year): float
     {
-        return $this->absences()
-            ->approved()
-            ->where('type', Absence::TYPE_SPECIAL)
-            ->whereYear('start_date', $year)
-            ->get()
-            ->sum(fn (Absence $a) => $a->dayCount());
+        return $this->countAbsenceDays(Absence::TYPE_SPECIAL, $year);
     }
 
     /** Net overtime in minutes across the ledger (from the go-live cut-off, if set). */

@@ -32,6 +32,27 @@ class MyStatsWidget extends StatsOverviewWidget
         return Employee::find($this->filters['employee_id'] ?? null) ?? $user;
     }
 
+    /**
+     * Urlaub als "Rest von Anspruch" — die nackte Restzahl allein war nicht zu
+     * deuten, und ohne gepflegten Anspruch gab sie die genommenen Tage als
+     * Minus aus, was wie ein negativer Resturlaub aussah.
+     */
+    protected static function vacationStat(Employee $employee, int $year): Stat
+    {
+        $entitlement = $employee->vacationEntitlement($year);
+        $taken = $employee->vacationTaken($year);
+
+        if ($entitlement === null) {
+            return Stat::make('Urlaub '.$year, Absence::formatDays($taken).' Tage genommen')
+                ->description('Kein Urlaubsanspruch im Vertrag hinterlegt')
+                ->color('warning');
+        }
+
+        return Stat::make('Resturlaub '.$year, Absence::formatDays($entitlement - $taken)
+            .' von '.Absence::formatDays($entitlement).' Tagen')
+            ->description(Absence::formatDays($taken).' Tage genommen');
+    }
+
     protected function getStats(): array
     {
         $employee = $this->targetEmployee();
@@ -51,7 +72,7 @@ class MyStatsWidget extends StatsOverviewWidget
             ->sum('expected_minutes');
 
         $stats = [
-            Stat::make('Resturlaub ' . now()->year, number_format($employee->vacationBalance(now()->year), 1) . ' Tage'),
+            static::vacationStat($employee, now()->year),
             Stat::make('Überstunden-Saldo', BalanceFormat::make($employee->overtimeBalanceMinutes())),
             Stat::make('Diese Woche', WorkDayResource::hhmm($weekWorked) . ' / ' . WorkDayResource::hhmm($weekExpected) . ' h')
                 ->description('Ist / Soll'),

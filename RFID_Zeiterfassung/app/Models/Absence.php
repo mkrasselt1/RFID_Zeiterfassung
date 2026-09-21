@@ -65,16 +65,41 @@ class Absence extends Model
         return $query->where('status', self::STATUS_APPROVED);
     }
 
+    /** "30" / "4,5" / "0" — halbe Tage bleiben, glatte verlieren die Null. */
+    public static function formatDays(float $days): string
+    {
+        return rtrim(rtrim(number_format($days, 1, ',', '.'), '0'), ',');
+    }
+
     public function coversDate(Carbon $date): bool
     {
         return $date->betweenIncluded($this->start_date, $this->end_date);
     }
 
-    /** Calendar-day span (half-day single-day requests count as 0.5). */
+    /**
+     * Days this absence actually consumes: workdays per the employee's contract,
+     * public holidays excluded. Ein Urlaub von Montag bis Sonntag kostet fünf
+     * Tage, nicht sieben — Wochenenden und Feiertage sind ohnehin frei.
+     *
+     * Der Vertrag wird einmal zum Startdatum bestimmt; ein Vertragswechsel
+     * mitten im Urlaub ist selten genug, um dafür nicht pro Tag zu fragen.
+     */
     public function dayCount(): float
     {
-        $days = $this->start_date->diffInDays($this->end_date) + 1;
+        $workdays = $this->employee?->activeContractOn($this->start_date)?->workdayList()
+            ?? [1, 2, 3, 4, 5];
 
-        return ($this->half_day && $days == 1) ? 0.5 : (float) $days;
+        $days = 0.0;
+        for ($day = $this->start_date->copy(); $day->lte($this->end_date); $day->addDay()) {
+            if (in_array((int) $day->isoWeekday(), $workdays, true) && ! Holiday::isHoliday($day)) {
+                $days++;
+            }
+        }
+
+        // Ein halber Tag ist nur bei einem eintägigen Antrag gemeint; fällt der
+        // auf einen freien Tag, bleibt es bei 0.
+        return ($this->half_day && $this->start_date->equalTo($this->end_date))
+            ? $days * 0.5
+            : $days;
     }
 }

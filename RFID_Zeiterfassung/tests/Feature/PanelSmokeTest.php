@@ -284,6 +284,104 @@ class PanelSmokeTest extends TestCase
         $this->assertSame('480 min', WorktimeReport::saldo(480));
     }
 
+    /** Contract with a vacation entitlement, valid from the given date. */
+    private function makeEmployeeWithVacation(?float $days, string $validFrom = '2024-01-01', string $email = 'v@example.de'): Employee
+    {
+        $employee = $this->makeEmployee(Employee::ROLE_EMPLOYEE, $email);
+        $employee->contracts()->create([
+            'valid_from' => $validFrom,
+            'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8,
+            'workdays' => [1, 2, 3, 4, 5],
+            'vacation_days_per_year' => $days,
+        ]);
+
+        return $employee;
+    }
+
+    private function approveVacation(Employee $employee, string $start, string $end, bool $halfDay = false): void
+    {
+        $employee->absences()->create([
+            'type' => Absence::TYPE_VACATION,
+            'start_date' => $start,
+            'end_date' => $end,
+            'status' => Absence::STATUS_APPROVED,
+            'half_day' => $halfDay,
+        ]);
+    }
+
+    /** Vacation is spent in workdays — a Mon-Sun request costs five days, not seven. */
+    public function test_vacation_skips_weekends_and_holidays(): void
+    {
+        $employee = $this->makeEmployeeWithVacation(30);
+
+        // 2026-03-02 is a Monday; 03-08 the Sunday after.
+        $this->approveVacation($employee, '2026-03-02', '2026-03-08');
+        $this->assertSame(5.0, $employee->vacationTaken(2026));
+
+        // Good Friday 2026 (2026-04-03) falls inside Mon-Fri and must not count.
+        \App\Models\Holiday::create(['date' => '2026-04-03', 'name' => 'Karfreitag', 'region' => 'DE-SN']);
+        \App\Models\Holiday::flushCache();
+        $this->approveVacation($employee, '2026-03-30', '2026-04-03');
+
+        $this->assertSame(9.0, $employee->vacationTaken(2026), 'vier Arbeitstage plus Karfreitag frei');
+    }
+
+    /** A half day is only meant for a single-day request. */
+    public function test_half_day_vacation_counts_as_a_half_workday(): void
+    {
+        $employee = $this->makeEmployeeWithVacation(30);
+        $this->approveVacation($employee, '2026-03-02', '2026-03-02', halfDay: true);
+
+        $this->assertSame(0.5, $employee->vacationTaken(2026));
+        $this->assertSame(29.5, $employee->vacationBalance(2026));
+    }
+
+    /**
+     * The entitlement used to be read off a fixed June 1st probe, so anyone
+     * hired later in the year silently got zero — and the tile then showed the
+     * days taken as a negative "remaining" figure.
+     */
+    public function test_entitlement_is_found_for_a_contract_starting_late_in_the_year(): void
+    {
+        $employee = $this->makeEmployeeWithVacation(30, validFrom: '2026-08-01');
+        $this->approveVacation($employee, '2026-09-01', '2026-09-04');
+
+        $this->assertSame(30.0, $employee->vacationEntitlement(2026));
+        $this->assertSame(4.0, $employee->vacationTaken(2026));
+        $this->assertSame(26.0, $employee->vacationBalance(2026));
+    }
+
+    /** Without an entitlement on file there is no remainder to report — not a negative one. */
+    public function test_missing_entitlement_reads_as_unknown_not_as_a_negative_balance(): void
+    {
+        $employee = $this->makeEmployeeWithVacation(null);
+        $this->approveVacation($employee, '2026-03-02', '2026-03-06');
+
+        $this->assertNull($employee->vacationEntitlement(2026));
+        $this->assertNull($employee->vacationBalance(2026));
+        $this->assertSame(5.0, $employee->vacationTaken(2026));
+    }
+
+    /**
+     * @dataProvider dayFormatCases
+     */
+    public function test_day_counts_render_without_noise(float $days, string $expected): void
+    {
+        $this->assertSame($expected, Absence::formatDays($days));
+    }
+
+    public static function dayFormatCases(): array
+    {
+        return [
+            'glatt' => [30.0, '30'],
+            'halber Tag' => [4.5, '4,5'],
+            'null' => [0.0, '0'],
+            'zweistellig glatt' => [50.0, '50'],
+            'dreistellig glatt' => [100.0, '100'],
+        ];
+    }
+
     /**
      * While today is still running, the open stamping counts up to "now" and the
      * expected time is capped at it — so the day never looks like a shortfall.

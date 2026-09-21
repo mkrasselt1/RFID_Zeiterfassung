@@ -1,4 +1,4 @@
-@php use App\Services\WorktimeReport as R; use App\Models\Absence; @endphp
+@php use App\Models\Absence; use App\Services\WorktimeReport as R; @endphp
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -41,13 +41,17 @@
             <td><div class="label">Soll (Monat)</div><div class="val">{{ R::hhmm($r['month_sum']['soll']) }}</div></td>
             <td><div class="label">Ist (Monat)</div><div class="val">{{ R::hhmm($r['month_sum']['ist']) }}</div></td>
             <td><div class="label">Saldo Monat</div><div class="val {{ $r['month_sum']['saldo'] < 0 ? 'neg' : ($r['month_sum']['saldo'] > 0 ? 'pos' : '') }}">{{ R::saldo($r['month_sum']['saldo']) }}</div></td>
-            <td><div class="label">Resturlaub</div><div class="val">{{ number_format($r['vacation_left'], 1, ',', '.') }} T</div></td>
+            @if($r['vacation_entitlement'] === null)
+                <td><div class="label">Urlaub genommen</div><div class="val">{{ Absence::formatDays($r['vacation_taken']) }} T</div></td>
+            @else
+                <td><div class="label">Resturlaub</div><div class="val">{{ Absence::formatDays($r['vacation_left']) }} von {{ Absence::formatDays($r['vacation_entitlement']) }} T</div></td>
+            @endif
         </tr>
         <tr>
             <td><div class="label">Übertrag (Vorjahre)</div><div class="val {{ $r['carryover'] < 0 ? 'neg' : ($r['carryover'] > 0 ? 'pos' : '') }}">{{ R::saldo($r['carryover']) }}</div></td>
             <td><div class="label">Saldo {{ $r['period']->year }}</div><div class="val {{ $r['year_balance'] < 0 ? 'neg' : ($r['year_balance'] > 0 ? 'pos' : '') }}">{{ R::saldo($r['year_balance']) }}</div></td>
             <td><div class="label">Saldo gesamt</div><div class="val {{ $r['total_balance'] < 0 ? 'neg' : ($r['total_balance'] > 0 ? 'pos' : '') }}">{{ R::saldo($r['total_balance']) }}</div></td>
-            <td><div class="label">Sonderurlaub {{ $r['period']->year }}</div><div class="val">{{ number_format($r['special_taken'], 1, ',', '.') }} T</div></td>
+            <td><div class="label">Sonderurlaub {{ $r['period']->year }}</div><div class="val">{{ Absence::formatDays($r['special_taken']) }} T</div></td>
         </tr>
     </table>
 

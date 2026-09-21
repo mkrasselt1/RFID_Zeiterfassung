@@ -128,6 +128,8 @@ class WorktimeReport
             'carryover' => $carryover,
             'year_balance' => $yearBalance,
             'total_balance' => $carryover + $yearBalance,
+            'vacation_entitlement' => $employee->vacationEntitlement($year),
+            'vacation_taken' => $employee->vacationTaken($year),
             'vacation_left' => $employee->vacationBalance($year),
             'special_taken' => $employee->specialLeaveTaken($year),
             'absence_days' => $absenceDays,

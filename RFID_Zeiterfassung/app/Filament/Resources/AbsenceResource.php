@@ -73,7 +73,9 @@ class AbsenceResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery();
+        // dayCount() liest die Arbeitstage aus dem Vertrag des Mitarbeiters —
+        // ohne Vorladen zöge die Spalte "Tage" ihn pro Zeile einzeln nach.
+        $query = parent::getEloquentQuery()->with('employee');
         $user = auth()->user();
         if ($user && ! $user->canManagePeople()) {
             $query->where('employee_id', $user->id);

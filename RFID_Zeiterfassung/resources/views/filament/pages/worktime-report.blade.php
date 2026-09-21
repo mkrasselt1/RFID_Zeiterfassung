@@ -1,4 +1,4 @@
-@php use App\Services\WorktimeReport as R; @endphp
+@php use App\Models\Absence; use App\Services\WorktimeReport as R; @endphp
 <x-filament-panels::page>
     {{ $this->form }}
 
@@ -17,8 +17,14 @@
                 'value' => R::saldo($v),
                 'color' => $v < 0 ? '#d03b3b' : ($v > 0 ? '#0ca30c' : ''),
             ];
+            // Urlaub als "Rest von Anspruch"; ohne gepflegten Anspruch gibt es
+            // keinen Rest zu zeigen, nur den Verbrauch.
+            $urlaub = $r['vacation_entitlement'] === null
+                ? ['label' => 'Urlaub genommen', 'value' => Absence::formatDays($r['vacation_taken']).' T']
+                : ['label' => 'Resturlaub', 'value' => Absence::formatDays($r['vacation_left'])
+                    .' von '.Absence::formatDays($r['vacation_entitlement']).' T'];
             $absences = collect($r['absence_days'])
-                ->map(fn ($days, $type) => (\App\Models\Absence::TYPES[$type] ?? $type).': '.$days)
+                ->map(fn ($days, $type) => (Absence::TYPES[$type] ?? $type).': '.$days)
                 ->implode(' · ');
 
             $tiles = [
@@ -29,9 +35,9 @@
                 ['label' => 'Übertrag (Vorjahre)'] + $saldo($r['carryover']),
                 ['label' => 'Saldo '.$r['period']->year] + $saldo($r['year_balance']),
                 ['label' => 'Saldo gesamt'] + $saldo($r['total_balance']),
-                ['label' => 'Resturlaub', 'value' => number_format($r['vacation_left'], 1, ',', '.').' T'],
+                $urlaub,
                 ['label' => 'Sonderurlaub '.$r['period']->year,
-                    'value' => number_format($r['special_taken'], 1, ',', '.').' T'],
+                    'value' => Absence::formatDays($r['special_taken']).' T'],
                 ['label' => 'Abwesenheit', 'value' => $absences ?: '–', 'small' => true],
             ];
         @endphp
@@ -49,7 +55,7 @@
     </x-filament::section>
 
     {{-- Monatskalender: grün = Plus/Soll erfüllt, rot = Minus, blau = Abwesenheit, lila = Feiertag --}}
-    @php $absenceLabels = array_values(\App\Models\Absence::TYPES); @endphp
+    @php $absenceLabels = array_values(Absence::TYPES); @endphp
     <x-filament::section>
         <x-slot name="heading">Kalender {{ $r['period']->translatedFormat('F Y') }}</x-slot>
         <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">
