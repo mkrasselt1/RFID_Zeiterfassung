@@ -115,9 +115,18 @@ class WorktimeReport
         $goLive = Setting::get('tracking_start');
         $base = fn () => WorkDay::where('employee_id', $employee->id)
             ->when($goLive, fn ($q) => $q->where('work_date', '>=', $goLive));
+        // Ein Nachweis für den April ist der Stand zum 30. April — nicht der von
+        // heute. Alles, was übers Jahr summiert, endet daher am Monatsende, im
+        // laufenden Monat heute. Sonst stünde im April-Nachweis der Sommerurlaub
+        // und ein Saldo, den es damals noch nicht gab.
+        $asOf = $monthEnd->copy();
+        if ($asOf->isFuture()) {
+            $asOf = Carbon::now()->startOfDay();
+        }
+
         $carryover = (int) $base()->where('work_date', '<', "{$year}-01-01")->sum('balance_minutes');
         $yearBalance = (int) $base()
-            ->whereBetween('work_date', ["{$year}-01-01", "{$year}-12-31"])->sum('balance_minutes');
+            ->whereBetween('work_date', ["{$year}-01-01", $asOf->toDateString()])->sum('balance_minutes');
 
         return [
             'employee' => $employee,
@@ -128,10 +137,11 @@ class WorktimeReport
             'carryover' => $carryover,
             'year_balance' => $yearBalance,
             'total_balance' => $carryover + $yearBalance,
+            'as_of' => $asOf,
             'vacation_entitlement' => $employee->vacationEntitlement($year),
-            'vacation_taken' => $employee->vacationTaken($year),
-            'vacation_left' => $employee->vacationBalance($year),
-            'special_taken' => $employee->specialLeaveTaken($year),
+            'vacation_taken' => $employee->vacationTaken($year, $asOf),
+            'vacation_left' => $employee->vacationBalance($year, $asOf),
+            'special_taken' => $employee->specialLeaveTaken($year, $asOf),
             'absence_days' => $absenceDays,
         ];
     }

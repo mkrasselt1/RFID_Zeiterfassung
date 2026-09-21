@@ -364,6 +364,80 @@ class PanelSmokeTest extends TestCase
     }
 
     /**
+     * The April report is the state as of April 30th: a July holiday booked
+     * months ahead must not already show up in it.
+     */
+    public function test_report_counts_vacation_only_up_to_the_month_shown(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21 12:00:00'));
+
+        $employee = $this->makeEmployeeWithVacation(30);
+        $this->approveVacation($employee, '2026-03-02', '2026-03-06');  // 5 Tage, vor April
+        $this->approveVacation($employee, '2026-07-06', '2026-07-17');  // 10 Tage Sommerurlaub
+
+        $april = app(WorktimeReport::class)->forMonth($employee, 2026, 4);
+        $this->assertSame('2026-04-30', $april['as_of']->toDateString());
+        $this->assertSame(5.0, $april['vacation_taken'], 'der Sommerurlaub war im April noch nicht');
+        $this->assertSame(25.0, $april['vacation_left']);
+
+        $september = app(WorktimeReport::class)->forMonth($employee, 2026, 9);
+        $this->assertSame('2026-09-21', $september['as_of']->toDateString(), 'laufender Monat: heute');
+        $this->assertSame(15.0, $september['vacation_taken']);
+        $this->assertSame(15.0, $september['vacation_left']);
+    }
+
+    /** A request straddling the cut-off counts only with the days before it. */
+    public function test_vacation_across_the_cut_off_counts_only_the_days_within(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21 12:00:00'));
+
+        $employee = $this->makeEmployeeWithVacation(30);
+        // Mo 2026-01-26 bis Fr 2026-02-06: je fünf Arbeitstage links und rechts
+        // des Monatswechsels, und kein Feiertag dazwischen.
+        $this->approveVacation($employee, '2026-01-26', '2026-02-06');
+
+        $this->assertSame(5.0, app(WorktimeReport::class)->forMonth($employee, 2026, 1)['vacation_taken']);
+        $this->assertSame(10.0, $employee->vacationTaken(2026));
+    }
+
+    /** A request starting in December counts its January days towards the new year. */
+    public function test_vacation_across_new_year_counts_in_both_years(): void
+    {
+        $employee = $this->makeEmployeeWithVacation(30);
+        // Mo 2025-12-29 bis Fr 2026-01-02.
+        $this->approveVacation($employee, '2025-12-29', '2026-01-02');
+
+        $this->assertSame(3.0, $employee->vacationTaken(2025), '29., 30., 31.12.');
+        $this->assertSame(2.0, $employee->vacationTaken(2026), '1. und 2.1.');
+    }
+
+    /**
+     * The year balance stops at the cut-off too, not at today.
+     *
+     * Ohne Vertrag baut der Bericht selbst kein Soll auf, sodass allein die hier
+     * gesetzte Juni-Zeile zählt — sie liegt außerhalb beider Anzeigefenster und
+     * wird vom Neuberechnen nicht angefasst.
+     */
+    public function test_year_balance_stops_at_the_month_shown(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-21 12:00:00'));
+
+        $employee = $this->makeEmployee();
+        $employee->workDays()->create([
+            'work_date' => '2026-06-15', 'period' => '2026-06',
+            'worked_minutes' => 600, 'expected_minutes' => 480, 'balance_minutes' => 120,
+            'raw_balance_minutes' => 120, 'break_minutes' => 0,
+        ]);
+
+        $april = app(WorktimeReport::class)->forMonth($employee, 2026, 4);
+        $this->assertSame(0, $april['year_balance'], 'der Juni zählt im April-Nachweis nicht mit');
+        $this->assertSame(0, $april['total_balance']);
+
+        $september = app(WorktimeReport::class)->forMonth($employee, 2026, 9);
+        $this->assertSame(120, $september['year_balance'], 'bis heute gerechnet ist er dabei');
+    }
+
+    /**
      * @dataProvider dayFormatCases
      */
     public function test_day_counts_render_without_noise(float $days, string $expected): void

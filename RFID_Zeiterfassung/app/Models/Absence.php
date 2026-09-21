@@ -84,13 +84,21 @@ class Absence extends Model
      * Der Vertrag wird einmal zum Startdatum bestimmt; ein Vertragswechsel
      * mitten im Urlaub ist selten genug, um dafür nicht pro Tag zu fragen.
      */
-    public function dayCount(): float
+    public function dayCount(?Carbon $from = null, ?Carbon $to = null): float
     {
+        // Ein Antrag, der über das Fenster hinausragt, zählt nur mit dem Teil
+        // darin — sonst stünde im April-Nachweis schon der ganze Mai-Urlaub.
+        $start = ($from && $from->gt($this->start_date)) ? $from->copy() : $this->start_date->copy();
+        $end = ($to && $to->lt($this->end_date)) ? $to->copy() : $this->end_date->copy();
+        if ($start->gt($end)) {
+            return 0.0;
+        }
+
         $workdays = $this->employee?->activeContractOn($this->start_date)?->workdayList()
             ?? [1, 2, 3, 4, 5];
 
         $days = 0.0;
-        for ($day = $this->start_date->copy(); $day->lte($this->end_date); $day->addDay()) {
+        for ($day = $start; $day->lte($end); $day->addDay()) {
             if (in_array((int) $day->isoWeekday(), $workdays, true) && ! Holiday::isHoliday($day)) {
                 $days++;
             }

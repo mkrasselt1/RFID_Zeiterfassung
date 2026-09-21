@@ -17,11 +17,14 @@
                 'value' => R::saldo($v),
                 'color' => $v < 0 ? '#d03b3b' : ($v > 0 ? '#0ca30c' : ''),
             ];
+            // Jahres- und Gesamtwerte gelten zum Stichtag des Nachweises, nicht
+            // zu heute — im Label steht daher, worauf sie sich beziehen.
+            $stand = ' · Stand '.$r['as_of']->format('d.m.');
             // Urlaub als "Rest von Anspruch"; ohne gepflegten Anspruch gibt es
             // keinen Rest zu zeigen, nur den Verbrauch.
             $urlaub = $r['vacation_entitlement'] === null
-                ? ['label' => 'Urlaub genommen', 'value' => Absence::formatDays($r['vacation_taken']).' T']
-                : ['label' => 'Resturlaub', 'value' => Absence::formatDays($r['vacation_left'])
+                ? ['label' => 'Urlaub genommen'.$stand, 'value' => Absence::formatDays($r['vacation_taken']).' T']
+                : ['label' => 'Resturlaub'.$stand, 'value' => Absence::formatDays($r['vacation_left'])
                     .' von '.Absence::formatDays($r['vacation_entitlement']).' T'];
             $absences = collect($r['absence_days'])
                 ->map(fn ($days, $type) => (Absence::TYPES[$type] ?? $type).': '.$days)
@@ -33,10 +36,10 @@
                 ['label' => 'Pause (Monat)', 'value' => R::hhmm($r['month_sum']['pause'])],
                 ['label' => 'Saldo Monat'] + $saldo($r['month_sum']['saldo']),
                 ['label' => 'Übertrag (Vorjahre)'] + $saldo($r['carryover']),
-                ['label' => 'Saldo '.$r['period']->year] + $saldo($r['year_balance']),
-                ['label' => 'Saldo gesamt'] + $saldo($r['total_balance']),
+                ['label' => 'Saldo '.$r['period']->year.$stand] + $saldo($r['year_balance']),
+                ['label' => 'Saldo gesamt'.$stand] + $saldo($r['total_balance']),
                 $urlaub,
-                ['label' => 'Sonderurlaub '.$r['period']->year,
+                ['label' => 'Sonderurlaub '.$r['period']->year.$stand,
                     'value' => Absence::formatDays($r['special_taken']).' T'],
                 ['label' => 'Abwesenheit', 'value' => $absences ?: '–', 'small' => true],
             ];
@@ -155,5 +158,7 @@
         „Pause" ist der automatische Abzug zusätzlich zu bereits ausgestempelten Zeiten
         (Monat: {{ R::hhmm($r['month_sum']['pause']) }}) ·
         ° Tagesabweichung unter der Toleranz, zählt als 0 (der Kalender zeigt den echten Wert) ·
+        Jahres-, Gesamt- und Urlaubswerte sind der Stand zum {{ $r['as_of']->format('d.m.Y') }}
+        (im laufenden Monat der von heute), nicht der von später gebuchten Zeiten ·
         der laufende Tag zählt bis jetzt, sein Soll ist darauf begrenzt — das volle Soll greift ab morgen.</p>
 </x-filament-panels::page>

@@ -130,40 +130,55 @@ class Employee extends Authenticatable implements FilamentUser, HasName
             : (float) $contract->vacation_days_per_year;
     }
 
-    /** Approved vacation days taken in a year. */
-    public function vacationTaken(int $year): float
+    /** Approved vacation days taken in a year, optionally only up to a cut-off. */
+    public function vacationTaken(int $year, ?Carbon $until = null): float
     {
-        return $this->countAbsenceDays(Absence::TYPE_VACATION, $year);
+        return $this->countAbsenceDays(Absence::TYPE_VACATION, $year, $until);
     }
 
     /**
-     * Approved days of one absence type in a year.
+     * Approved days of one absence type within a year, up to `$until` if given.
+     *
+     * Gezählt wird das Fenster, nicht der Antrag: ein Urlaub über den Stichtag
+     * oder den Jahreswechsel hinaus zählt nur mit den Tagen, die hineinfallen.
+     * Deshalb werden alle Anträge geholt, die sich mit dem Fenster überschneiden
+     * — ein Filter auf das Startdatum verlöre den, der im Vorjahr beginnt.
      *
      * dayCount() fragt den Mitarbeiter nach seinen Arbeitstagen — der steht hier
      * schon fest, also wird er gesetzt statt pro Antrag nachgeladen.
      */
-    protected function countAbsenceDays(string $type, int $year): float
+    protected function countAbsenceDays(string $type, int $year, ?Carbon $until = null): float
     {
+        $from = Carbon::create($year, 1, 1)->startOfDay();
+        $to = Carbon::create($year, 12, 31)->startOfDay();
+        if ($until && $until->copy()->startOfDay()->lt($to)) {
+            $to = $until->copy()->startOfDay();
+        }
+        if ($to->lt($from)) {
+            return 0.0;
+        }
+
         return $this->absences()
             ->approved()
             ->where('type', $type)
-            ->whereYear('start_date', $year)
+            ->whereDate('start_date', '<=', $to->toDateString())
+            ->whereDate('end_date', '>=', $from->toDateString())
             ->get()
-            ->sum(fn (Absence $a) => $a->setRelation('employee', $this)->dayCount());
+            ->sum(fn (Absence $a) => $a->setRelation('employee', $this)->dayCount($from, $to));
     }
 
     /** Remaining vacation days, or null when no entitlement is on file. */
-    public function vacationBalance(int $year): ?float
+    public function vacationBalance(int $year, ?Carbon $until = null): ?float
     {
         $entitlement = $this->vacationEntitlement($year);
 
-        return $entitlement === null ? null : $entitlement - $this->vacationTaken($year);
+        return $entitlement === null ? null : $entitlement - $this->vacationTaken($year, $until);
     }
 
     /** Approved special-leave days taken in a year (does not draw from vacation). */
-    public function specialLeaveTaken(int $year): float
+    public function specialLeaveTaken(int $year, ?Carbon $until = null): float
     {
-        return $this->countAbsenceDays(Absence::TYPE_SPECIAL, $year);
+        return $this->countAbsenceDays(Absence::TYPE_SPECIAL, $year, $until);
     }
 
     /** Net overtime in minutes across the ledger (from the go-live cut-off, if set). */
