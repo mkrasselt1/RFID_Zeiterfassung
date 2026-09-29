@@ -109,10 +109,11 @@ class WorktimeReport
                 $monthSum['soll'] += $soll;
                 $monthSum['saldo'] += $saldo;
                 $monthSum['pause'] += $pause;
-                if ($wd?->absence && Contract::countsAsWorkday($absenceContract, $cursor)) {
+                $absenceFactor = Contract::workdayFactor($absenceContract, $cursor);
+                if ($wd?->absence && $absenceFactor > 0.0) {
                     $type = $wd->absence->type;
                     $absenceDays[$type] = ($absenceDays[$type] ?? 0.0)
-                        + ($wd->absence->half_day ? 0.5 : 1.0);
+                        + ($wd->absence->half_day ? $absenceFactor * 0.5 : $absenceFactor);
                 }
             }
         }
@@ -125,10 +126,12 @@ class WorktimeReport
         // heute. Alles, was übers Jahr summiert, endet daher am Monatsende, im
         // laufenden Monat heute. Sonst stünde im April-Nachweis der Sommerurlaub
         // und ein Saldo, den es damals noch nicht gab.
-        $asOf = $monthEnd->copy();
-        if ($asOf->isFuture()) {
-            $asOf = Carbon::now()->startOfDay();
-        }
+        // Nur der laufende Monat endet bei heute. Ein künftiger Monat endet an
+        // seinem Monatsende — sonst läge der Stichtag vor dem Monat und der
+        // Nachweis widerspräche sich, etwa "Urlaub: 7" neben "Resturlaub 30 von 30".
+        $asOf = Carbon::now()->between($monthStart, $monthEnd)
+            ? Carbon::now()->startOfDay()
+            : $monthEnd->copy();
 
         $yearStart = Carbon::create($year, 1, 1)->startOfDay();
 

@@ -73,18 +73,28 @@ class Contract extends Model
     }
 
     /**
-     * Whether a day is worked at all: a contract weekday and no public holiday.
+     * How much of a day is worked: 0.0 outside the contract's weekdays or on a
+     * full public holiday, 0.5 on a half one, otherwise 1.0.
      *
-     * Die eine Stelle, an der das entschieden wird — Urlaubstage, die
-     * Abwesenheitsübersicht und das Soll müssen sich einig sein. Ohne Vertrag
-     * gilt die Mo–Fr-Annahme, wie überall sonst auch.
+     * Die eine Stelle, an der das entschieden wird — das Soll, der
+     * Urlaubsverbrauch und die Abwesenheitsübersicht müssen sich einig sein.
+     * Ohne Vertrag gilt die Mo–Fr-Annahme, wie überall sonst auch.
      */
-    public static function countsAsWorkday(?self $contract, CarbonInterface $day): bool
+    public static function workdayFactor(?self $contract, CarbonInterface $day): float
     {
         $workdays = $contract?->workdayList() ?? [1, 2, 3, 4, 5];
 
-        return in_array((int) $day->isoWeekday(), $workdays, true)
-            && ! Holiday::isHoliday($day);
+        if (! in_array((int) $day->isoWeekday(), $workdays, true)) {
+            return 0.0;
+        }
+
+        return Holiday::workFactor($day);
+    }
+
+    /** Whether a day is worked at all — a half day still counts as worked. */
+    public static function countsAsWorkday(?self $contract, CarbonInterface $day): bool
+    {
+        return static::workdayFactor($contract, $day) > 0.0;
     }
 
     /**
@@ -150,34 +160,38 @@ class Contract extends Model
         if ($this->worktime_model === self::MODEL_TRACKING) {
             return 0;
         }
-        // Non-workdays and public holidays carry no expected time (paid day off).
-        if (! $this->isWorkday($date) || Holiday::isHoliday($date)) {
+        // Non-workdays and public holidays carry no expected time (paid day off);
+        // a half holiday halves it.
+        $factor = static::workdayFactor($this, $date);
+        if ($factor <= 0.0) {
             return 0;
         }
 
         $hours = (float) $this->target_hours;
         $workdaysPerWeek = max(count($this->workdayList()), 1);
 
-        return match ($this->worktime_model) {
-            self::MODEL_DAILY => (int) round($hours * 60),
-            self::MODEL_WEEKLY => (int) round($hours * 60 / $workdaysPerWeek),
-            self::MODEL_MONTHLY => (int) round($hours * 60 / max($this->workdaysInMonth($date), 1)),
-            default => 0,
+        $full = match ($this->worktime_model) {
+            self::MODEL_DAILY => $hours * 60,
+            self::MODEL_WEEKLY => $hours * 60 / $workdaysPerWeek,
+            self::MODEL_MONTHLY => $hours * 60 / max($this->workdaysInMonth($date), 1),
+            default => 0.0,
         };
+
+        return (int) round($full * $factor);
     }
 
-    /** Workdays in the month, excluding public holidays (so the monthly target
-     *  is distributed only over days actually worked). */
-    private function workdaysInMonth(Carbon $date): int
+    /**
+     * Workdays in the month, excluding public holidays, so the monthly target is
+     * distributed only over days actually worked. Ein halber Feiertag zählt als
+     * halber Tag, sonst verteilte sich das Monatssoll auf zu viele Tage.
+     */
+    private function workdaysInMonth(Carbon $date): float
     {
-        $list = $this->workdayList();
-        $count = 0;
+        $count = 0.0;
         $cursor = $date->copy()->startOfMonth();
         $end = $date->copy()->endOfMonth();
         while ($cursor->lte($end)) {
-            if (in_array($cursor->isoWeekday(), $list, true) && ! Holiday::isHoliday($cursor)) {
-                $count++;
-            }
+            $count += static::workdayFactor($this, $cursor);
             $cursor->addDay();
         }
 

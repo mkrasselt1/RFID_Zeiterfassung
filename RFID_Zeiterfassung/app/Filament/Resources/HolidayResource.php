@@ -36,6 +36,9 @@ class HolidayResource extends Resource
         return $form->schema([
             Forms\Components\DatePicker::make('date')->label('Datum')->required()->unique(ignoreRecord: true),
             Forms\Components\TextInput::make('name')->label('Bezeichnung')->required(),
+            Forms\Components\Toggle::make('half_day')->label('Halber Arbeitstag')
+                ->helperText('Für Heiligabend und Silvester: halbes Soll, halber Urlaubstag. '
+                    .'Aus = ganzer Feiertag, also kein Soll und kein Urlaubsverbrauch.'),
         ]);
     }
 
@@ -46,6 +49,9 @@ class HolidayResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('date')->label('Datum')->date('d.m.Y')->sortable(),
                 Tables\Columns\TextColumn::make('name')->label('Bezeichnung')->searchable(),
+                Tables\Columns\TextColumn::make('half_day')->label('Umfang')->badge()
+                    ->formatStateUsing(fn (bool $state) => $state ? 'Halber Tag' : 'Ganzer Tag')
+                    ->color(fn (bool $state) => $state ? 'warning' : 'gray'),
                 Tables\Columns\TextColumn::make('source')->label('Quelle')->badge()
                     ->formatStateUsing(fn (string $state) => $state === Holiday::SOURCE_AUTO ? 'Automatisch' : 'Manuell')
                     ->color(fn (string $state) => $state === Holiday::SOURCE_AUTO ? 'gray' : 'info'),
@@ -66,9 +72,18 @@ class HolidayResource extends Resource
                             ->options(HolidayService::REGIONS)
                             ->default(HolidayService::region())
                             ->required(),
+                        Forms\Components\Toggle::make('half_days')
+                            ->label('Heiligabend und Silvester als halbe Tage anlegen')
+                            ->default(true)
+                            ->helperText('Beide sind kein gesetzlicher Feiertag. Bestehende '
+                                .'Einträge an diesen Tagen bleiben unangetastet.'),
                     ])
                     ->action(function (array $data) {
-                        $count = app(HolidayService::class)->sync((int) $data['year'], $data['region']);
+                        $count = app(HolidayService::class)->sync(
+                            (int) $data['year'],
+                            $data['region'],
+                            (bool) ($data['half_days'] ?? true),
+                        );
                         Notification::make()
                             ->title("{$count} Feiertage importiert")
                             ->body('Tipp: anschließend das Arbeitszeitkonto neu berechnen.')

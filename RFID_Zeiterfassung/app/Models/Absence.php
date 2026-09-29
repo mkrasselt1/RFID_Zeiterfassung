@@ -79,7 +79,8 @@ class Absence extends Model
     /**
      * Days this absence actually consumes: workdays per the employee's contract,
      * public holidays excluded. Ein Urlaub von Montag bis Sonntag kostet fünf
-     * Tage, nicht sieben — Wochenenden und Feiertage sind ohnehin frei.
+     * Tage, nicht sieben — Wochenenden und Feiertage sind ohnehin frei. Ein
+     * halber Feiertag wie Heiligabend kostet einen halben Tag.
      *
      * Der Vertrag wird einmal zum Startdatum bestimmt; ein Vertragswechsel
      * mitten im Urlaub ist selten genug, um dafür nicht pro Tag zu fragen.
@@ -98,9 +99,7 @@ class Absence extends Model
 
         $days = 0.0;
         for ($day = $start; $day->lte($end); $day->addDay()) {
-            if (Contract::countsAsWorkday($contract, $day)) {
-                $days++;
-            }
+            $days += Contract::workdayFactor($contract, $day);
         }
 
         // Ein halber Tag ist nur bei einem eintägigen Antrag gemeint; fällt der

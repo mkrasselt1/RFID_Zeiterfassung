@@ -386,6 +386,25 @@ class PanelSmokeTest extends TestCase
         $this->assertSame(15.0, $september['vacation_left']);
     }
 
+    /**
+     * Only the running month stops at today. A future month stops at its own
+     * month end, otherwise the cut-off would sit before the month shown and the
+     * Nachweis would contradict itself.
+     */
+    public function test_cut_off_for_a_future_month_is_its_month_end(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-29 12:00:00'));
+
+        $employee = $this->makeEmployeeWithVacation(30);
+        $this->approveVacation($employee, '2026-12-21', '2026-12-24');   // Mo-Do, 4 Tage
+
+        $december = app(WorktimeReport::class)->forMonth($employee, 2026, 12);
+
+        $this->assertSame('2026-12-31', $december['as_of']->toDateString());
+        $this->assertSame(4.0, $december['vacation_taken']);
+        $this->assertSame(26.0, $december['vacation_left']);
+    }
+
     /** A request straddling the cut-off counts only with the days before it. */
     public function test_vacation_across_the_cut_off_counts_only_the_days_within(): void
     {
@@ -642,6 +661,114 @@ class PanelSmokeTest extends TestCase
         $this->assertSame([1, 2, 3, 4, 5], $contract->fresh()->workdayList());
         $this->assertTrue($contract->fresh()->isWorkday(Carbon::parse('2026-03-02')), 'Montag');
         $this->assertFalse($contract->fresh()->isWorkday(Carbon::parse('2026-03-07')), 'Samstag');
+    }
+
+    private function makeHoliday(string $date, string $name, bool $halfDay = false): void
+    {
+        \App\Models\Holiday::create([
+            'date' => $date, 'name' => $name, 'half_day' => $halfDay,
+            'source' => \App\Models\Holiday::SOURCE_MANUAL,
+        ]);
+        \App\Models\Holiday::flushCache();
+    }
+
+    /** A full holiday costs no vacation at all; a half one costs half a day. */
+    public function test_half_holidays_cost_half_a_vacation_day(): void
+    {
+        $this->travelTo(Carbon::parse('2027-03-01 12:00:00'));
+
+        $employee = $this->makeEmployeeWithVacation(30);
+        // Heiligabend 2026 ist ein Donnerstag, Silvester der Donnerstag darauf,
+        // der 1. Weihnachtsfeiertag der Freitag dazwischen.
+        $this->makeHoliday('2026-12-24', 'Heiligabend', halfDay: true);
+        $this->makeHoliday('2026-12-25', '1. Weihnachtsfeiertag');
+        $this->makeHoliday('2026-12-31', 'Silvester', halfDay: true);
+
+        // Mo 21.12. bis Do 31.12.: Mo/Di/Mi voll, Do 24. halb, Fr 25. frei,
+        // Mo 28. bis Mi 30. voll, Do 31. halb -> 6 volle + 2 halbe = 7.
+        $this->approveVacation($employee, '2026-12-21', '2026-12-31');
+
+        $this->assertSame(7.0, $employee->vacationTaken(2026));
+        $this->assertSame(23.0, $employee->vacationBalance(2026));
+    }
+
+    /** The same factor halves the expected time for that day. */
+    public function test_half_holiday_halves_the_expected_minutes(): void
+    {
+        $employee = $this->makeEmployeeWithVacation(30);
+        $contract = $employee->contracts()->first();
+
+        $this->makeHoliday('2026-12-24', 'Heiligabend', halfDay: true);
+        $this->makeHoliday('2026-12-25', '1. Weihnachtsfeiertag');
+
+        $this->assertSame(480, $contract->expectedMinutesForDate(Carbon::parse('2026-12-23')), 'normaler Mittwoch');
+        $this->assertSame(240, $contract->expectedMinutesForDate(Carbon::parse('2026-12-24')), 'halber Tag');
+        $this->assertSame(0, $contract->expectedMinutesForDate(Carbon::parse('2026-12-25')), 'ganzer Feiertag');
+    }
+
+    /** The absence overview in the Nachweis uses the same factor. */
+    public function test_absence_overview_counts_half_holidays_as_half(): void
+    {
+        $this->travelTo(Carbon::parse('2027-03-01 12:00:00'));
+
+        $employee = $this->makeEmployeeWithVacation(30);
+        $this->makeHoliday('2026-12-24', 'Heiligabend', halfDay: true);
+        $this->makeHoliday('2026-12-25', '1. Weihnachtsfeiertag');
+
+        // Mi 23.12. voll + Do 24.12. halb + Fr 25.12. frei = 1,5 Tage.
+        $this->approveVacation($employee, '2026-12-23', '2026-12-25');
+        app(WorktimeService::class)->recalculateForAbsence($employee->absences()->first());
+
+        $this->assertSame(1.5, $employee->vacationTaken(2026));
+        $this->assertSame(
+            [Absence::TYPE_VACATION => 1.5],
+            app(WorktimeReport::class)->forMonth($employee, 2026, 12)['absence_days'],
+        );
+    }
+
+    /** Public holidays are excluded from the remaining-vacation figure. */
+    public function test_full_holiday_does_not_consume_vacation(): void
+    {
+        $this->travelTo(Carbon::parse('2027-03-01 12:00:00'));
+
+        $employee = $this->makeEmployeeWithVacation(30);
+        $this->makeHoliday('2026-05-14', 'Christi Himmelfahrt');   // Donnerstag
+
+        // Mo 11.05. bis Fr 15.05.: fünf Werktage, einer davon Feiertag -> 4.
+        $this->approveVacation($employee, '2026-05-11', '2026-05-15');
+
+        $this->assertSame(4.0, $employee->vacationTaken(2026));
+        $this->assertSame(26.0, $employee->vacationBalance(2026));
+    }
+
+    /** The import adds the two half days, without touching what is already there. */
+    public function test_holiday_import_adds_half_days_and_keeps_existing_entries(): void
+    {
+        app(\App\Services\HolidayService::class)->sync(2026, 'DE-SN');
+        \App\Models\Holiday::flushCache();
+
+        $christmasEve = \App\Models\Holiday::where('date', 'like', '2026-12-24%')->first();
+        $this->assertNotNull($christmasEve, 'Heiligabend wird angelegt');
+        $this->assertTrue((bool) $christmasEve->half_day);
+        $this->assertSame(0.5, \App\Models\Holiday::workFactor(Carbon::parse('2026-12-24')));
+
+        // Ein von Hand gepflegter Eintrag bleibt, wie er ist.
+        \App\Models\Holiday::where('date', 'like', '2026-12-31%')->delete();
+        $this->makeHoliday('2026-12-31', 'Betriebsruhe');   // ganzer Tag, manuell
+        app(\App\Services\HolidayService::class)->sync(2026, 'DE-SN');
+        \App\Models\Holiday::flushCache();
+
+        $newYearsEve = \App\Models\Holiday::where('date', 'like', '2026-12-31%')->first();
+        $this->assertSame('Betriebsruhe', $newYearsEve->name);
+        $this->assertFalse((bool) $newYearsEve->half_day);
+    }
+
+    /** Opting out leaves them alone. */
+    public function test_holiday_import_can_skip_the_half_days(): void
+    {
+        app(\App\Services\HolidayService::class)->sync(2026, 'DE-SN', halfDays: false);
+
+        $this->assertNull(\App\Models\Holiday::where('date', 'like', '2026-12-24%')->first());
     }
 
     /**

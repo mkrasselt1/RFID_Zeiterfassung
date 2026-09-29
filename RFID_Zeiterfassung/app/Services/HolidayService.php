@@ -39,10 +39,25 @@ class HolidayService
     }
 
     /**
+     * Half working days that are not public holidays anywhere in Germany, but
+     * are handled as such in most workplaces: 24-12 and 31-12.
+     *
+     * @var array<string,string> 'm-d' => name
+     */
+    public const HALF_DAYS = [
+        '12-24' => 'Heiligabend',
+        '12-31' => 'Silvester',
+    ];
+
+    /**
      * Import holidays for a year. Refreshes auto entries, keeps manual ones.
      * Returns the number of auto holidays written.
+     *
+     * `$halfDays` adds Heiligabend and Silvester as half working days. Sie sind
+     * nirgends gesetzlicher Feiertag und kommen daher nicht aus der Bibliothek —
+     * ohne das müsste man sie jedes Jahr von Hand nachtragen.
      */
-    public function sync(int $year, ?string $region = null): int
+    public function sync(int $year, ?string $region = null, bool $halfDays = true): int
     {
         $region ??= static::region();
 
@@ -66,6 +81,24 @@ class HolidayService
                 ['name' => $holiday->name, 'source' => Holiday::SOURCE_AUTO],
             );
             $count++;
+        }
+
+        if ($halfDays) {
+            foreach (self::HALF_DAYS as $monthDay => $name) {
+                $date = "{$year}-{$monthDay}";
+                // Ein echter Feiertag am selben Tag und alles von Hand Gepflegte
+                // haben Vorrang — der Import überschreibt keine Entscheidung.
+                if (in_array($date, $manualDates, true) || Holiday::where('date', $date)->exists()) {
+                    continue;
+                }
+                Holiday::create([
+                    'date' => $date,
+                    'name' => $name,
+                    'half_day' => true,
+                    'source' => Holiday::SOURCE_AUTO,
+                ]);
+                $count++;
+            }
         }
 
         Holiday::flushCache();

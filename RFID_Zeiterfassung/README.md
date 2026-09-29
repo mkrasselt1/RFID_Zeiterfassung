@@ -74,7 +74,12 @@ is governed by their role (Mitarbeiter / Vorgesetzter / Personal / Administrator
   `php artisan worktime:recalc [--days=N|--from=…--to=…]` or use the
   "Neu berechnen" button (schedule it daily in production).
 - **Feiertage (holidays)** — a holiday on a contract workday yields Soll = 0
-  (paid, no negative balance) and is excluded from the monthly workday count.
+  (paid, no negative balance), costs no vacation day, and is excluded from the
+  monthly workday count. **Halbe Tage** (toggle *Halber Arbeitstag*) halve the
+  Soll and cost half a vacation day instead: Heiligabend and Silvester are added
+  that way by the import, since neither is a statutory holiday. Untick the
+  option in the import dialog (or pass `--no-half-days`) to skip them; existing
+  entries on those dates are never overwritten.
   Auto-imported per Bundesland via `spatie/holidays` (configure the Bundesland
   under *Einstellungen*; import with the "Feiertage importieren" button or
   `php artisan holidays:sync --year=YYYY`), and manually editable. Recompute the
