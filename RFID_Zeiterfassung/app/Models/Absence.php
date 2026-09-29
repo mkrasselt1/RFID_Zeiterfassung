@@ -94,12 +94,11 @@ class Absence extends Model
             return 0.0;
         }
 
-        $workdays = $this->employee?->activeContractOn($this->start_date)?->workdayList()
-            ?? [1, 2, 3, 4, 5];
+        $contract = $this->employee?->activeContractOn($this->start_date);
 
         $days = 0.0;
         for ($day = $start; $day->lte($end); $day->addDay()) {
-            if (in_array((int) $day->isoWeekday(), $workdays, true) && ! Holiday::isHoliday($day)) {
+            if (Contract::countsAsWorkday($contract, $day)) {
                 $days++;
             }
         }

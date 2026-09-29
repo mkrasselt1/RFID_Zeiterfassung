@@ -27,7 +27,7 @@
                 : ['label' => 'Resturlaub'.$stand, 'value' => Absence::formatDays($r['vacation_left'])
                     .' von '.Absence::formatDays($r['vacation_entitlement']).' T'];
             $absences = collect($r['absence_days'])
-                ->map(fn ($days, $type) => (Absence::TYPES[$type] ?? $type).': '.$days)
+                ->map(fn ($days, $type) => (Absence::TYPES[$type] ?? $type).': '.Absence::formatDays($days))
                 ->implode(' · ');
 
             $tiles = [

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Absence;
+use App\Models\Contract;
 use App\Models\Employee;
 use App\Models\Holiday;
 use App\Models\Setting;
@@ -50,6 +51,9 @@ class WorktimeReport
         $weeks = [];
         $monthSum = ['ist' => 0, 'soll' => 0, 'saldo' => 0, 'pause' => 0];
         $absenceDays = [];
+        // Ein Urlaub von Samstag bis Freitag kostet fünf Tage, nicht sieben:
+        // gezählt wird, was laut Vertrag überhaupt gearbeitet worden wäre.
+        $absenceContract = $employee->activeContractOn($monthStart);
 
         for ($cursor = $displayStart->copy(); $cursor->lte($displayEnd); $cursor->addDay()) {
             $key = $cursor->toDateString();
@@ -105,8 +109,10 @@ class WorktimeReport
                 $monthSum['soll'] += $soll;
                 $monthSum['saldo'] += $saldo;
                 $monthSum['pause'] += $pause;
-                if ($wd?->absence) {
-                    $absenceDays[$wd->absence->type] = ($absenceDays[$wd->absence->type] ?? 0) + 1;
+                if ($wd?->absence && Contract::countsAsWorkday($absenceContract, $cursor)) {
+                    $type = $wd->absence->type;
+                    $absenceDays[$type] = ($absenceDays[$type] ?? 0.0)
+                        + ($wd->absence->half_day ? 0.5 : 1.0);
                 }
             }
         }

@@ -92,6 +92,12 @@ is governed by their role (Mitarbeiter / Vorgesetzter / Personal / Administrator
   filed in advance by employees and approved/rejected by HR/Admin (single step).
   Approval recomputes the affected ledger days. Vacation counts against the
   contract's yearly entitlement; overtime reduction draws from the saldo.
+  Days are counted as **contract workdays**, public holidays excluded: Saturday
+  through Friday on a Mon–Fri contract costs five days, not seven. A half day
+  only applies to a single-day request.
+- **Saldo-Korrekturen (balance adjustments)** — manual corrections booked
+  *alongside* the ledger, never into it (see below). The overtime counter is the
+  sum of both, so the history stays exactly as it was recorded.
 
 Roles & access: employees see only their own absences and work-days and the
 check-in/out screen; Mitarbeiter/Verträge/Geräte/Karten/Roh-Stempelungen/
@@ -100,6 +106,35 @@ vacation balance, overtime saldo and this week's Ist/Soll.
 
 Seeded logins: **admin@example.de** (Administrator) and **max@example.de**
 (Mitarbeiter, two cards + a contract) — both password **password**.
+
+### Resetting an overtime balance (e.g. at year end)
+
+Legacy balances carried over from a previous system, or an agreed cut-off at the
+turn of the year, are booked as a correction. The ledger itself is read-only by
+design — it is the computed result of stampings and contract — so corrections
+sit next to it and the counter adds the two together.
+
+1. *Mitarbeiter* → open the employee → tab **Saldo-Korrekturen**.
+2. **Saldo setzen** → pick the **Stichtag** (defaults to January 1st). The form
+   shows the current balance as of that date.
+3. Enter the **Zielsaldo in Stunden** (`0` starts the counter from zero) and a
+   reason, then **Differenz buchen**.
+
+The difference is computed against the balance *including* corrections already
+booked, so running it twice does not deduct twice — the second run reports
+"Nichts zu tun". Single corrections can also be booked by hand via
+*Korrektur buchen*; all of them are listed with date, amount, reason and author,
+and can be edited or deleted.
+
+The booking date decides where the correction lands: **January 1st** counts into
+the new year (the old year's carryover stays visible and is offset by the year
+balance), **December 31st** disappears into the carryover instead. Pick whichever
+matches how you want the Nachweis to read.
+
+> Do **not** use *Einstellungen → "Zeiterfassung aktiv ab"* for this. That is a
+> one-off go-live cut-off: `WorktimeService::recalculateDay()` **deletes** ledger
+> rows before that date, which would empty out the Arbeitszeitnachweis for every
+> earlier month, not just the balance.
 
 ## Panel features
 

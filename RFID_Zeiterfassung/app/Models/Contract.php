@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -52,15 +53,38 @@ class Contract extends Model
         return $this->belongsTo(Employee::class);
     }
 
-    /** ISO weekday numbers (Mon=1..Sun=7) that count as working days. */
+    /**
+     * ISO weekday numbers (Mon=1..Sun=7) that count as working days.
+     *
+     * Auf int normalisiert: aus der Checkbox-Liste kommen die Wochentage je
+     * nach Weg als Strings zurück, und der strikte Vergleich unten würde dann
+     * keinen einzigen Tag als Arbeitstag erkennen.
+     */
     public function workdayList(): array
     {
-        return ! empty($this->workdays) ? $this->workdays : [1, 2, 3, 4, 5];
+        return ! empty($this->workdays)
+            ? array_map('intval', $this->workdays)
+            : [1, 2, 3, 4, 5];
     }
 
     public function isWorkday(Carbon $date): bool
     {
-        return in_array($date->isoWeekday(), $this->workdayList(), true);
+        return in_array((int) $date->isoWeekday(), $this->workdayList(), true);
+    }
+
+    /**
+     * Whether a day is worked at all: a contract weekday and no public holiday.
+     *
+     * Die eine Stelle, an der das entschieden wird — Urlaubstage, die
+     * Abwesenheitsübersicht und das Soll müssen sich einig sein. Ohne Vertrag
+     * gilt die Mo–Fr-Annahme, wie überall sonst auch.
+     */
+    public static function countsAsWorkday(?self $contract, CarbonInterface $day): bool
+    {
+        $workdays = $contract?->workdayList() ?? [1, 2, 3, 4, 5];
+
+        return in_array((int) $day->isoWeekday(), $workdays, true)
+            && ! Holiday::isHoliday($day);
     }
 
     /**

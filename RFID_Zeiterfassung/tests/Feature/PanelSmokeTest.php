@@ -585,6 +585,66 @@ class PanelSmokeTest extends TestCase
     }
 
     /**
+     * Samstag bis Freitag bei einer Mo–Fr-Woche sind fünf Tage, nicht sieben —
+     * im Verbrauch wie in der Abwesenheitsübersicht des Nachweises.
+     */
+    public function test_absence_over_a_weekend_counts_only_contract_workdays(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-29 12:00:00'));
+
+        $employee = $this->makeEmployeeWithVacation(30);
+        // Sa 2026-03-07 bis Fr 2026-03-13: Mo–Fr dazwischen sind fünf Tage.
+        $this->approveVacation($employee, '2026-03-07', '2026-03-13');
+        app(WorktimeService::class)->recalculateForAbsence($employee->absences()->first());
+
+        $this->assertSame(5.0, $employee->vacationTaken(2026));
+
+        $report = app(WorktimeReport::class)->forMonth($employee, 2026, 3);
+        $this->assertSame([Absence::TYPE_VACATION => 5.0], $report['absence_days']);
+    }
+
+    /** A Saturday-worker's contract moves the count with it. */
+    public function test_absence_counts_follow_the_contract_workdays(): void
+    {
+        $this->travelTo(Carbon::parse('2026-09-29 12:00:00'));
+
+        $employee = $this->makeEmployee(Employee::ROLE_EMPLOYEE, 'sat@example.de');
+        $employee->contracts()->create([
+            'valid_from' => '2024-01-01',
+            'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8,
+            'workdays' => [2, 3, 4, 5, 6],   // Di–Sa
+            'vacation_days_per_year' => 30,
+        ]);
+        $this->approveVacation($employee, '2026-03-07', '2026-03-13');
+        app(WorktimeService::class)->recalculateForAbsence($employee->absences()->first());
+
+        // Sa 7., Di 10., Mi 11., Do 12., Fr 13. — der Montag zählt hier nicht.
+        $this->assertSame(5.0, $employee->vacationTaken(2026));
+        $this->assertSame(
+            [Absence::TYPE_VACATION => 5.0],
+            app(WorktimeReport::class)->forMonth($employee, 2026, 3)['absence_days'],
+        );
+    }
+
+    /** Weekdays stored as strings must not silently empty the workday list. */
+    public function test_workday_list_survives_string_values(): void
+    {
+        $employee = $this->makeEmployee();
+        $contract = $employee->contracts()->create([
+            'valid_from' => '2024-01-01',
+            'worktime_model' => Contract::MODEL_DAILY,
+            'target_hours' => 8,
+            'workdays' => ['1', '2', '3', '4', '5'],
+            'vacation_days_per_year' => 30,
+        ]);
+
+        $this->assertSame([1, 2, 3, 4, 5], $contract->fresh()->workdayList());
+        $this->assertTrue($contract->fresh()->isWorkday(Carbon::parse('2026-03-02')), 'Montag');
+        $this->assertFalse($contract->fresh()->isWorkday(Carbon::parse('2026-03-07')), 'Samstag');
+    }
+
+    /**
      * @dataProvider dayFormatCases
      */
     public function test_day_counts_render_without_noise(float $days, string $expected): void
