@@ -52,6 +52,7 @@ class ManageSettings extends Page implements HasForms
             'holiday_region' => Setting::get('holiday_region', 'DE-SN'),
             'tracking_start' => Setting::get('tracking_start'),
             'overtime_format' => BalanceFormat::current(),
+            'show_donation_link' => (bool) Setting::get('show_donation_link', true),
             'break_rules' => \App\Models\Contract::globalBreakRules(),
             'balance_tolerance_minutes' => \App\Models\Contract::globalBalanceTolerance(),
             'operator_name' => $operator['name'] ?? '',
@@ -87,6 +88,13 @@ class ManageSettings extends Page implements HasForms
                         \Filament\Forms\Components\DatePicker::make('tracking_start')
                             ->label('Zeiterfassung aktiv ab')
                             ->helperText('Tage vor diesem Datum bauen kein Soll/Saldo (z. B. Go-Live der Stempeluhren). Leer = keine Grenze.'),
+                        \Filament\Forms\Components\Toggle::make('show_donation_link')
+                            ->label('Spendenhinweis anzeigen')
+                            ->helperText('Dezenter Hinweis am Ende der Seitenleiste, nur für '
+                                .'Personal und Administration sichtbar. Das Projekt ist freie '
+                                .'Software und bleibt kostenlos — der Hinweis finanziert die '
+                                .'Weiterentwicklung und das Hosting für alle, die nicht selbst '
+                                .'hosten können.'),
                         \Filament\Forms\Components\Select::make('overtime_format')
                             ->label('Anzeige der Überstunden')
                             ->options(BalanceFormat::FORMATS)
@@ -162,6 +170,7 @@ class ManageSettings extends Page implements HasForms
         Setting::put('holiday_region', $data['holiday_region'] ?? 'DE-SN');
         Setting::put('tracking_start', $data['tracking_start'] ?: null);
         Setting::put('overtime_format', $data['overtime_format'] ?? BalanceFormat::DEFAULT);
+        Setting::put('show_donation_link', (bool) ($data['show_donation_link'] ?? true));
         // Das Format ist pro Request gemerkt — sonst zeigt die Seite nach dem
         // Speichern noch die alte Schreibweise.
         BalanceFormat::forget();

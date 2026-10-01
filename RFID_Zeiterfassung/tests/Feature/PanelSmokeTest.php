@@ -772,6 +772,22 @@ class PanelSmokeTest extends TestCase
     }
 
     /**
+     * The donation hint is for whoever chose the software, not for whoever
+     * clocks in on it — and a business must be able to switch it off.
+     */
+    public function test_donation_hint_is_admin_only_and_can_be_switched_off(): void
+    {
+        $admin = $this->makeEmployee(Employee::ROLE_ADMIN, 'boss@example.de');
+        $worker = $this->makeEmployee(Employee::ROLE_EMPLOYEE, 'worker@example.de');
+
+        $this->actingAs($admin)->get('/admin')->assertSee('paypal.me/krasm');
+        $this->actingAs($worker)->get('/admin')->assertDontSee('paypal.me/krasm');
+
+        Setting::put('show_donation_link', false);
+        $this->actingAs($admin)->get('/admin')->assertDontSee('paypal.me/krasm');
+    }
+
+    /**
      * @dataProvider dayFormatCases
      */
     public function test_day_counts_render_without_noise(float $days, string $expected): void

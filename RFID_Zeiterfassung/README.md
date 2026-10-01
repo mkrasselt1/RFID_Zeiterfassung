@@ -156,6 +156,14 @@ matches how you want the Nachweis to read.
 - **Einstellungen** — operator info, timezone, Google OAuth client + connect,
   and admin profile/password.
 
+## Unterstützen
+
+Freie Software, kostenlos nutzbar. Spenden tragen die Weiterentwicklung und das
+Hosting für Betriebe, die nicht selbst hosten können:
+**[paypal.me/krasm](https://paypal.me/krasm)**. Im Panel steht dazu ein dezenter
+Hinweis am Ende der Seitenleiste — nur für Personal/Administration sichtbar und
+unter *Einstellungen → Allgemein* abschaltbar.
+
 ## Google Calendar
 
 OAuth config lives in the `settings` table (no more on-disk `config.php`).
