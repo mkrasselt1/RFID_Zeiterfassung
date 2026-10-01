@@ -53,7 +53,9 @@ Ehrliche Liste für alle, die überlegen, das einzusetzen oder mitzuentwickeln:
 - **Keine arbeitsrechtliche Prüfung.** Niemand hat das Projekt gegen ArbZG,
   MiLoG und DSGVO geprüft.
 
-Mithilfe ist willkommen, besonders bei diesen Punkten.
+Mithilfe ist willkommen, besonders bei diesen Punkten. Die vollständige Liste
+mit Reihenfolge und Aufwand steht in der [Roadmap](ROADMAP.md) — dort auch,
+was an der Hardware noch zu tun ist.
 
 ## Unterstützen
 
