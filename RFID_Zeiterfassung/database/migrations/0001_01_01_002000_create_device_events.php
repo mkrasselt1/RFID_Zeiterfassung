@@ -20,6 +20,19 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Zwei Schritte in einer Migration, und MySQL rollt DDL nicht zurück:
+        // bricht der zweite ab, steht die Tabelle schon, der Eintrag in
+        // `migrations` fehlt, und jeder weitere Lauf scheitert an "table
+        // already exists". Jeder Schritt prüft deshalb selbst, ob er dran ist.
+        if (! Schema::hasTable('device_events')) {
+            $this->createEvents();
+        }
+
+        $this->addDeviceState();
+    }
+
+    private function createEvents(): void
+    {
         Schema::create('device_events', function (Blueprint $table) {
             $table->id();
             $table->foreignId('device_id')->constrained()->cascadeOnDelete();
@@ -41,26 +54,43 @@ return new class extends Migration
             $table->index('occurred_at');
         });
 
-        Schema::table('devices', function (Blueprint $table) {
-            // Zustand, damit ein stummer Leser auffällt, bevor jemand seine
-            // Zeiten vermisst.
-            $table->dateTime('last_seen_at')->nullable();
-            $table->string('last_ip', 45)->nullable();
-            $table->string('firmware_version', 20)->nullable();
-            $table->unsignedInteger('pending_count')->default(0);
-            // Für die Konfiguration im Betrieb: unter welcher Adresse der Leser
-            // im Netz erreichbar ist. Vom Gerät gemeldet, von Hand überschreibbar.
-            $table->string('local_ip', 45)->nullable();
-        });
+    }
+
+    /**
+     * Zustand, damit ein stummer Leser auffällt, bevor jemand seine Zeiten
+     * vermisst — und `local_ip` für die Konfiguration im Betrieb: unter welcher
+     * Adresse der Leser im Netz erreichbar ist. Vom Gerät gemeldet, von Hand
+     * überschreibbar.
+     *
+     * Spalte für Spalte geprüft: ein Abbruch kann mitten in der Reihe passiert
+     * sein.
+     */
+    private function addDeviceState(): void
+    {
+        $columns = [
+            'last_seen_at' => fn (Blueprint $t) => $t->dateTime('last_seen_at')->nullable(),
+            'last_ip' => fn (Blueprint $t) => $t->string('last_ip', 45)->nullable(),
+            'firmware_version' => fn (Blueprint $t) => $t->string('firmware_version', 20)->nullable(),
+            'pending_count' => fn (Blueprint $t) => $t->unsignedInteger('pending_count')->default(0),
+            'local_ip' => fn (Blueprint $t) => $t->string('local_ip', 45)->nullable(),
+        ];
+
+        foreach ($columns as $name => $define) {
+            if (Schema::hasColumn('devices', $name)) {
+                continue;
+            }
+            Schema::table('devices', fn (Blueprint $table) => $define($table));
+        }
     }
 
     public function down(): void
     {
         Schema::dropIfExists('device_events');
-        Schema::table('devices', function (Blueprint $table) {
-            $table->dropColumn([
-                'last_seen_at', 'last_ip', 'firmware_version', 'pending_count', 'local_ip',
-            ]);
-        });
+
+        foreach (['last_seen_at', 'last_ip', 'firmware_version', 'pending_count', 'local_ip'] as $name) {
+            if (Schema::hasColumn('devices', $name)) {
+                Schema::table('devices', fn (Blueprint $table) => $table->dropColumn($name));
+            }
+        }
     }
 };

@@ -18,6 +18,14 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Wiederaufsetzbar, wie die übrigen Migrationen hier: MySQL rollt DDL
+        // nicht zurück, also hinterlässt ein Abbruch einen halben Zustand —
+        // und ein erneuter Lauf scheitert sonst an "table already exists",
+        // ohne dass man ihn ohne Handarbeit wieder flottbekommt.
+        if (Schema::hasTable('balance_adjustments')) {
+            return;
+        }
+
         Schema::create('balance_adjustments', function (Blueprint $table) {
             $table->id();
             $table->foreignId('employee_id')->constrained()->cascadeOnDelete();
