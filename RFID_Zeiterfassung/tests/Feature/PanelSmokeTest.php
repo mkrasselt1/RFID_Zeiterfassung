@@ -119,6 +119,202 @@ class PanelSmokeTest extends TestCase
             ->assertStatus(503)->assertSee('Error: Ungueltige Anfrage');
     }
 
+    private function postStampings(array $events, string $token = 'a1b2c3d4e5f60718', array $extra = [])
+    {
+        return $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson('/api/v1/stampings', $extra + ['events' => $events]);
+    }
+
+    /** A buffered stamping books with the time it happened, not the upload time. */
+    public function test_buffered_stamping_uses_the_device_time(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 09:00:00'));
+
+        $r = $this->postStampings([
+            ['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:03:12+02:00'],
+        ]);
+
+        $r->assertStatus(200)->assertJsonPath('results.0.status', 'checkin')
+            ->assertJsonPath('results.0.name', 'Max Mustermann')
+            ->assertJsonPath('results.0.duplicate', false);
+
+        $log = \App\Models\UserLog::where('card_uid', 'deadbeef')->latest('id')->first();
+        $this->assertSame('07:03:12', substr((string) $log->timein, 0, 8), 'die Zeit vom Gerät, nicht 09:00');
+    }
+
+    /** Several at once, in order — a reader empties its buffer in one go. */
+    public function test_several_buffered_stampings_are_booked_in_order(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 18:00:00'));
+
+        $r = $this->postStampings([
+            ['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:00:00+02:00'],
+            ['uid' => 'dev-2', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T16:30:00+02:00'],
+        ]);
+
+        $r->assertStatus(200)
+            ->assertJsonPath('results.0.status', 'checkin')
+            ->assertJsonPath('results.1.status', 'checkout');
+
+        $log = \App\Models\UserLog::where('card_uid', 'deadbeef')->latest('id')->first();
+        $this->assertSame('07:00:00', substr((string) $log->timein, 0, 8));
+        $this->assertSame('16:30:00', substr((string) $log->timeout, 0, 8));
+    }
+
+    /**
+     * The answer can get lost on the way back, so the device retries. That must
+     * not book the same tap twice.
+     */
+    public function test_redelivering_an_event_books_nothing_twice(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 09:00:00'));
+        $event = ['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:03:12+02:00'];
+
+        $this->postStampings([$event])->assertJsonPath('results.0.duplicate', false);
+        $again = $this->postStampings([$event]);
+
+        $again->assertStatus(200)
+            ->assertJsonPath('results.0.status', 'checkin')
+            ->assertJsonPath('results.0.duplicate', true);
+
+        $this->assertSame(1, \App\Models\UserLog::where('card_uid', 'deadbeef')->count());
+        $this->assertSame(1, \App\Models\DeviceEvent::count());
+    }
+
+    /** The same uid from another reader is a different event. */
+    public function test_event_uids_are_only_unique_per_device(): void
+    {
+        $this->seed();
+        $second = \App\Models\Device::create([
+            'device_name' => 'Tor 2', 'device_dep' => 'All',
+            'device_uid' => '00112233445566aa', 'device_date' => '2026-01-01',
+            'device_mode' => \App\Models\Device::MODE_TIME,
+        ]);
+
+        $event = ['uid' => 'counter-1', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:00:00+02:00'];
+        $this->postStampings([$event])->assertJsonPath('results.0.duplicate', false);
+        $this->postStampings([$event], $second->device_uid)->assertJsonPath('results.0.duplicate', false);
+
+        $this->assertSame(2, \App\Models\DeviceEvent::count());
+    }
+
+    /** A clock running far ahead would book work that has not happened yet. */
+    public function test_a_device_clock_in_the_future_falls_back_to_server_time(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 09:00:00'));
+
+        $this->postStampings([
+            ['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => '2027-01-01T07:00:00+01:00'],
+        ])->assertJsonPath('results.0.status', 'checkin');
+
+        $log = \App\Models\UserLog::where('card_uid', 'deadbeef')->latest('id')->first();
+        $this->assertSame('2026-10-01', substr((string) $log->checkindate, 0, 10));
+    }
+
+    /** A reader without a clock may omit the time; the server fills it in. */
+    public function test_stamping_without_a_time_falls_back_to_server_time(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 09:15:00'));
+
+        $this->postStampings([['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => null]])
+            ->assertStatus(200)->assertJsonPath('results.0.status', 'checkin');
+
+        $log = \App\Models\UserLog::where('card_uid', 'deadbeef')->latest('id')->first();
+        $this->assertSame('09:15:00', substr((string) $log->timein, 0, 8));
+    }
+
+    /** Reader state is recorded so a silent one can be spotted. */
+    public function test_upload_records_reader_state(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 09:00:00'));
+
+        $this->postStampings(
+            [['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:00:00+02:00']],
+            extra: ['firmware' => '2.4', 'pending' => 7],
+        )->assertStatus(200);
+
+        $device = \App\Models\Device::where('device_uid', 'a1b2c3d4e5f60718')->first();
+        $this->assertSame('2.4', $device->firmware_version);
+        $this->assertSame(7, $device->pending_count);
+        $this->assertNotNull($device->last_seen_at);
+    }
+
+    /** @dataProvider badStampingRequests */
+    public function test_bad_upload_is_refused(array $headers, array $body, int $status): void
+    {
+        $this->seed();
+
+        $this->withHeaders($headers)->postJson('/api/v1/stampings', $body)->assertStatus($status);
+    }
+
+    public static function badStampingRequests(): array
+    {
+        $good = ['uid' => 'x', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:00:00+02:00'];
+
+        return [
+            'ohne Token' => [[], ['events' => [$good]], 401],
+            'unbekanntes Gerät' => [['Authorization' => 'Bearer ffffffffffffffff'], ['events' => [$good]], 401],
+            'Token kein Hex' => [['Authorization' => 'Bearer nope'], ['events' => [$good]], 401],
+            'keine Ereignisse' => [['Authorization' => 'Bearer a1b2c3d4e5f60718'], ['events' => []], 422],
+            'Karte kein Hex' => [['Authorization' => 'Bearer a1b2c3d4e5f60718'],
+                ['events' => [['uid' => 'x', 'card_uid' => 'zz', 'at' => '2026-10-01T07:00:00+02:00']]], 422],
+            // Fehlende Zeit ist erlaubt (Gerät ohne Uhr), ein Unsinnswert nicht.
+            'Zeit ist Unsinn' => [['Authorization' => 'Bearer a1b2c3d4e5f60718'],
+                ['events' => [['uid' => 'x', 'card_uid' => 'deadbeef', 'at' => 'gestern']]], 422],
+        ];
+    }
+
+    /**
+     * @dataProvider configUrlCases
+     */
+    public function test_reader_config_url(?string $ip, ?string $expected): void
+    {
+        $device = \App\Models\Device::create([
+            'device_name' => 'Tor', 'device_dep' => 'All', 'device_uid' => '00112233445566bb',
+            'device_date' => '2026-01-01', 'device_mode' => \App\Models\Device::MODE_TIME,
+            'local_ip' => $ip,
+        ]);
+
+        $this->assertSame($expected, $device->configUrl());
+    }
+
+    public static function configUrlCases(): array
+    {
+        return [
+            'IPv4' => ['192.168.1.50', 'http://192.168.1.50/'],
+            'IPv6 wird geklammert' => ['fd00::1', 'http://[fd00::1]/'],
+            'leer' => [null, null],
+            'Leerzeichen' => ['   ', null],
+            // Sonst stünde im href, was jemand ins Feld getippt hat.
+            'kein gültiges Ziel' => ['nicht; eine ip', null],
+            'Javascript-Versuch' => ['javascript:alert(1)', null],
+        ];
+    }
+
+    /** A reader that has not reported in a day is flagged. */
+    public function test_reader_is_flagged_as_silent(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-01 12:00:00'));
+        $device = \App\Models\Device::create([
+            'device_name' => 'Tor', 'device_dep' => 'All', 'device_uid' => '00112233445566cc',
+            'device_date' => '2026-01-01', 'device_mode' => \App\Models\Device::MODE_TIME,
+        ]);
+
+        $this->assertTrue($device->isSilent(), 'noch nie gesehen');
+
+        $device->markSeen('192.168.1.50');
+        $this->assertFalse($device->fresh()->isSilent());
+
+        $this->travelTo(Carbon::parse('2026-10-02 13:00:00'));
+        $this->assertTrue($device->fresh()->isSilent(), 'seit über einem Tag still');
+    }
+
     public function test_device_api_two_cards_resolve_to_same_employee(): void
     {
         $this->seed();

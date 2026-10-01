@@ -39,16 +39,65 @@ class Device extends Model
 
     public $timestamps = false;
 
+    /**
+     * Note that the reader just talked to us.
+     *
+     * `last_ip` ist die Adresse, von der die Anfrage kam — hinter einem Proxy
+     * nicht zwingend die des Lesers. `local_ip` meldet das Gerät selbst und ist
+     * die, unter der man es im Netz erreicht.
+     */
+    public function markSeen(?string $ip = null, ?string $firmware = null, ?int $pending = null): void
+    {
+        $this->forceFill(array_filter([
+            'last_seen_at' => now(),
+            'last_ip' => $ip,
+            'firmware_version' => $firmware,
+        ], fn ($v) => $v !== null));
+
+        if ($pending !== null) {
+            $this->pending_count = max(0, $pending);
+        }
+
+        $this->save();
+    }
+
     protected $fillable = [
         'device_name',
         'device_dep',
         'device_uid',
         'device_date',
         'device_mode',
+        'local_ip',
     ];
+
+    /** Nothing heard for this long means something is wrong, not quiet. */
+    public const SILENT_AFTER_HOURS = 24;
+
+    public function isSilent(): bool
+    {
+        return $this->last_seen_at === null
+            || $this->last_seen_at->lt(now()->subHours(self::SILENT_AFTER_HOURS));
+    }
+
+    /** The reader's own configuration page, if we know where it lives. */
+    public function configUrl(): ?string
+    {
+        $ip = trim((string) $this->local_ip);
+        if ($ip === '' || ! filter_var($ip, FILTER_VALIDATE_IP)) {
+            return null;
+        }
+
+        return 'http://'.(str_contains($ip, ':') ? '['.$ip.']' : $ip).'/';
+    }
+
+    public function events()
+    {
+        return $this->hasMany(DeviceEvent::class);
+    }
 
     protected $casts = [
         'device_date' => 'date',
         'device_mode' => 'integer',
+        'last_seen_at' => 'datetime',
     ];
 }

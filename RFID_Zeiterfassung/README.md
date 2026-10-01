@@ -61,6 +61,39 @@ clocks.
 
 Device modes: `0` = Registrierung (learn cards), `1` = Zeiterfassung (attendance).
 
+### Buffered stampings (`POST /api/v1/stampings`)
+
+For readers that keep stampings while the network is down. Token in the
+`Authorization: Bearer` header; the query parameter is not accepted here.
+
+```json
+{ "firmware": "2.4", "pending": 3,
+  "events": [ { "uid": "17", "card_uid": "DEADBEEF", "at": "2026-10-01T07:03:12+02:00" } ] }
+```
+
+Answers with one result per event, in the same order:
+
+```json
+{ "server_time": "2026-10-01T07:05:00+02:00",
+  "results": [ { "uid": "17", "status": "checkin", "name": "Max Mustermann",
+                 "message": "", "duplicate": false } ] }
+```
+
+`status` is one of `checkin`, `checkout`, `learned`, `known`, `failed`.
+
+Three things set it apart from the legacy endpoint:
+
+- **Several at once**, so a reader empties its buffer in one request (max 200).
+- **The device's own time.** A stamping books when the card was held, not when
+  the upload succeeded — without that a buffer would be pointless. `at` may be
+  omitted by a reader without a clock; then server time applies. A clock running
+  more than five minutes ahead is ignored in favour of server time.
+- **Safe to repeat.** Each event carries a `uid`, unique per device. If the
+  answer is lost and the reader sends again, nothing is booked twice — the
+  stored result comes back with `duplicate: true`. Delivered events are kept in
+  `device_events`, which doubles as the log of what each reader reported and how
+  long it was offline.
+
 ## Employees, contracts, worktime & absences
 
 The app is employee-centric. **Employees log into the same panel**; what they see
