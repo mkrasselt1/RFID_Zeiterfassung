@@ -15,7 +15,7 @@
 #include <time.h>
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
-#include <WiFiManager.h>
+#include <wifiManager.h>
 #include <WiFiClientSecure.h>
 // RFID-----------------------------
 #include <SPI.h>
@@ -24,6 +24,10 @@
 // OLED-----------------------------
 #include <Wire.h>
 #include <icons.h>
+#include "StampingBuffer.h"
+
+#include "StampingUploader.h"
+#include "ConfigPortal.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 //************************************************************************
@@ -59,6 +63,18 @@ WiFiManagerParameter custom_device_token("device_token", "device token", device_
 
 WiFiClientSecure client;
 
+// Global, nicht nur in setup(): das Konfigurationsportal soll im Betrieb
+// erreichbar bleiben, damit WLAN, Zeitserver und Serveradresse ohne
+// Neuflashen zu ändern sind.
+WiFiManager wifiManager;
+
+// Zeitpunkt des letzten Upload-Versuchs und der letzten WLAN-Prüfung.
+unsigned long lastFlushAttempt = 0;
+unsigned long lastWifiCheck = 0;
+const unsigned long FLUSH_INTERVAL_MS = 30000;
+const unsigned long WIFI_RETRY_MS = 15000;
+
+
 enum CardStates
 {
   IDLE,
@@ -88,74 +104,95 @@ void SendCardID()
   TimerEventCardClear = readerTimer.every(2000, resetLastCard);
   readerTimer.stop(TimerEventCardSend);
   Serial.println("Sending the Card ID");
-  if (WiFi.isConnected())
+  lastCardTime = millis();
+
+  // Erst puffern, dann senden. Früher ging die Stempelung verloren, sobald das
+  // WLAN weg war — die Person hatte gestempelt, das System wusste nichts davon.
+  // Jetzt liegt sie sicher auf dem Gerät und wird so lange nachgeliefert, bis
+  // der Server sie bestätigt.
+  time_t now = time(nullptr);
+  String ownUid = stampingBuffer.add(newRfidId, now);
+  if (ownUid.length() == 0)
   {
-    HTTPClient http; // Declare object of class HTTPClient
-    // GET Data
-    String temp_url;
-    temp_url = backend_server;
-    temp_url.concat("?card_uid=");
-    temp_url.concat(newRfidId);
-    temp_url.concat("&device_token=");
-    temp_url.concat(device_token); // Add the Card ID to the GET array in order to send it
-
-    // GET method
-    http.begin(temp_url);              // initiate HTTP request
-    int httpCode = http.GET();         // Send the request
-    String payload = http.getString(); // Get the response payload
-
-    // Serial.println(Link);   //Print HTTP return code
-    // Serial.println(httpCode); // Print HTTP return code
-    // Serial.println(Card_uid); // Print Card ID
-    lastCardTime = millis();
-    Serial.println(payload); // Print request response payload
-
-    if (httpCode == 200)
-    {
-      if (payload.substring(0, 5) == "login")
-      {
-        Card_Message = payload.substring(5);
-        CardResult = LOGIN_PICTURE;
-      }
-      else if (payload.substring(0, 6) == "logout")
-      {
-        Card_Message = payload.substring(6);
-        CardResult = LOGOUT_PICTURE;
-      }
-      else if (payload == "successful")
-      {
-        CardResult = CARD_ADD;
-      }
-      else if (payload == "available")
-      {
-        CardResult = CARD_FREE;
-      }
-      delay(100);
-    }
-    else if (payload.substring(0, 6) == "Error:")
-    {
-      CardResult = CARD_ERROR;
-      Card_Message = payload;
-      Serial.println(payload);
-    }
-    else
-    {
-      CardResult = CARD_ERROR;
-      Card_Message = "Uebertragungsfehler";
-      // CardResult = IDLE;
-      // Serial.println(payload);
-    }
-    http.end(); // Close connection
-  }else{
     CardResult = CARD_ERROR;
-    Card_Message = "Kein Empfang";
+    Card_Message = "Speicher voll";
+    Serial.println(Card_Message);
+    return;
   }
+
+  // Mit der eigenen Kennung findet sich in der Antwort wieder, was aus genau
+  // dieser Stempelung wurde — auch wenn davor noch Liegengebliebenes mitgeht.
+  UploadOutcome outcome = stampingUploader.flush(ownUid);
+  lastFlushAttempt = millis();
+
+  if (!outcome.ok)
+  {
+    // Nicht zugestellt — aber nicht verloren. Das sagen wir auch so.
+    CardResult = CARD_ERROR;
+    Card_Message = outcome.lastMessage.length() > 0
+                       ? outcome.lastMessage + " - gespeichert"
+                       : String("Gespeichert, sende spaeter");
+    Serial.println(Card_Message);
+    return;
+  }
+
+  if (outcome.lastStatus == "checkin")
+  {
+    Card_Message = outcome.lastName;
+    CardResult = LOGIN_PICTURE;
+  }
+  else if (outcome.lastStatus == "checkout")
+  {
+    Card_Message = outcome.lastName;
+    CardResult = LOGOUT_PICTURE;
+  }
+  else if (outcome.lastStatus == "learned")
+  {
+    CardResult = CARD_ADD;
+  }
+  else if (outcome.lastStatus == "known")
+  {
+    CardResult = CARD_FREE;
+  }
+  else if (outcome.lastStatus == "failed")
+  {
+    CardResult = CARD_ERROR;
+    Card_Message = outcome.lastMessage;
+  }
+  else
+  {
+    // Zugestellt, aber ohne Antwort zu dieser Karte (etwa weil der Rückstau
+    // größer war als ein Schwung). Kein Fehler — nur noch keine Rückmeldung.
+    CardResult = CARD_SEND;
+    Card_Message = "Gesendet";
+  }
+
   Serial.println(Card_Message);
 }
+
 //=======================================================================
 
 //************************************************************************
 // callback notifying us of the need to save config
+/** Die aktuellen Felder nach SPIFFS schreiben — ohne Neustart. */
+void persistConfig()
+{
+  DynamicJsonDocument json(1024);
+  json["time_server"] = time_server;
+  json["backend_server"] = backend_server;
+  json["device_token"] = device_token;
+
+  File configFile = SPIFFS.open("/config.json", "w");
+  if (!configFile)
+  {
+    Serial.println("failed to open config file for writing");
+    return;
+  }
+  serializeJson(json, configFile);
+  configFile.close();
+  Serial.println("config saved");
+}
+
 void saveConfigCallback()
 {
   Serial.println("config shall be saved");
@@ -435,24 +472,23 @@ void setup()
 
   //-----------self configuration page-------------
   // WiFiManager
-  WiFiManager WiFiManager;
 
   // set config save notify callback
-  WiFiManager.setSaveConfigCallback(saveConfigCallback);
-  WiFiManager.addParameter(&custom_time_server);
-  WiFiManager.addParameter(&custom_backend_server);
-  WiFiManager.addParameter(&custom_device_token);
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+  wifiManager.addParameter(&custom_time_server);
+  wifiManager.addParameter(&custom_backend_server);
+  wifiManager.addParameter(&custom_device_token);
 
   String hostname = "Zeiterfassung";
   hostname.concat(WiFi.macAddress());
   WiFi.hostname(hostname);
   //Give more time to connect to access point
-  WiFiManager.setConnectTimeout(300);
-  WiFiManager.setConnectRetries(5);
+  wifiManager.setConnectTimeout(300);
+  wifiManager.setConnectRetries(5);
   
   // reset saved settings
-  // WiFiManager.resetSettings();
-  if (!WiFiManager.autoConnect("ESP-Attendance-Setup"))
+  // wifiManager.resetSettings();
+  if (!wifiManager.autoConnect("ESP-Attendance-Setup"))
   {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
@@ -463,6 +499,22 @@ void setup()
 
   //---------------------------------------------
   configTime(timezone * 3600, time_dst, time_server, "time.nist.gov");
+
+  //-----------Puffer und Upload-------------
+  stampingBuffer.begin();
+  stampingUploader.configure(backend_server, device_token, CODE_VERSION);
+  Serial.printf("Gepufferte Stempelungen: %u\n", (unsigned)stampingBuffer.count());
+
+  //-----------Konfiguration im Betrieb-------------
+  // Eigene, passwortgeschützte Seite statt des WiFiManager-Portals: dessen
+  // Konfigurationsseite kennt keine Anmeldung, und auf ihr stehen Serveradresse
+  // und Token. Angemeldet wird sich mit dem Token des Lesers.
+  ConfigPortal::Fields fields{
+      time_server, sizeof(time_server),
+      backend_server, sizeof(backend_server),
+      device_token, sizeof(device_token),
+  };
+  configPortal.begin(fields, persistConfig);
 
   Serial.println("device ready");
   CardResult = DEVICE_READY;
@@ -490,8 +542,30 @@ void loop()
   //reader actions
   readerTimer.update();
 
-  //simple restart when disconnected
-  if (!WiFi.isConnected()){
-    ESP.restart();
+  // Konfigurationsseite bedienen (nicht blockierend).
+  configPortal.handle();
+
+  // Früher startete das Gerät bei jedem WLAN-Aussetzer neu. Das machte den
+  // Puffer wertlos und riss die Stempeluhr für eine Minute aus dem Betrieb.
+  // Jetzt wird nur neu verbunden — gestempelt werden kann auch ohne Netz.
+  if (!WiFi.isConnected() && millis() - lastWifiCheck > WIFI_RETRY_MS)
+  {
+    lastWifiCheck = millis();
+    Serial.println(F("WLAN weg - versuche erneut zu verbinden"));
+    WiFi.reconnect();
+  }
+
+  // Liegengebliebenes nachliefern, sobald wieder Netz da ist.
+  if (WiFi.isConnected() && millis() - lastFlushAttempt > FLUSH_INTERVAL_MS)
+  {
+    lastFlushAttempt = millis();
+    if (!stampingBuffer.isEmpty())
+    {
+      UploadOutcome outcome = stampingUploader.flush();
+      if (outcome.delivered > 0)
+      {
+        Serial.printf("%u gepufferte Stempelungen zugestellt\n", (unsigned)outcome.delivered);
+      }
+    }
   }
 }

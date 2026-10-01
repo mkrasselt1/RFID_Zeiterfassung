@@ -57,20 +57,21 @@ sein und das Gerät zuverlässig.
 
 ### B1 — Zuverlässigkeit zuerst
 
-- [ ] **Offline-Puffer im Gerät** — M · *kritisch*
+- [x] **Offline-Puffer im Gerät** — *Firmware geschrieben, noch nicht auf Hardware erprobt*
   Fällt das WLAN aus, ist die Stempelung heute verloren. Das Gerät muss sie
   lokal ablegen und später nachliefern. SPIFFS hält bisher nur die Konfiguration.
-- [ ] **Echtzeituhr und Gerätezeitstempel** — M
-  Hängt am Puffer: eine nachgelieferte Stempelung braucht die Zeit, zu der sie
-  entstand, nicht die des Uploads. Der ESP32 ohne RTC verliert die Zeit beim
-  Stromausfall.
-- [ ] **Geräte-API härten** — M
+- [ ] **Echtzeituhr** — M
+  Die Schnittstelle nimmt die Gerätezeit entgegen, und die Firmware rechnet sie
+  aus der Laufzeit zurück, solange sie läuft. Nach einem Neustart ohne Netz ist
+  der Zeitpunkt aber verloren und es zählt die Serverzeit. Eine Uhr im Gerät
+  löst das endgültig.
+- [x] **Geräte-API härten** — Bearer-Header, `POST /api/v1/stampings`, Idempotenz, Gerätezeit
   Heute `GET /getdata.php?device_token=…&card_uid=…`. Das Token steht in der
   URL und landet damit in Server-, Proxy- und Browserverläufen, und ein GET
   ändert Zustand. Nötig: POST, Token im Header, signierte Anfragen, Schutz gegen
   Wiedereinspielen, und eine Idempotenz-Kennung, damit eine doppelt gelieferte
   Stempelung nicht doppelt zählt. Der alte Endpunkt kann übergangsweise bleiben.
-- [ ] **Gerätezustand im Panel** — S
+- [x] **Gerätezustand im Panel** — zuletzt gesehen, Rückstau, Firmware, Adresse
   Zuletzt gesehen, Firmware-Version, Puffergröße, WLAN-Qualität. Ein stummes
   Terminal fällt sonst erst auf, wenn jemand seine Zeiten vermisst.
 - [ ] **Rückmeldung am Gerät verbessern** — S
@@ -79,7 +80,7 @@ sein und das Gerät zuverlässig.
 
 ### B2 — Nachbau trivial machen
 
-- [ ] **`platformio.ini` aufräumen** — S
+- [x] **`platformio.ini` aufräumen** — Port wird automatisch gesucht
   `com_port = COM9` ist fest eingetragen; auf jedem anderen Rechner als dem des
   Autors scheitert der Upload. Port automatisch erkennen, Boards als getrennte
   Umgebungen.
@@ -87,7 +88,7 @@ sein und das Gerät zuverlässig.
   Mit ESP Web Tools lässt sich ein Board direkt aus einer Webseite flashen, ohne
   Toolchain, ohne Treiberbastelei. Fertige Binärdateien pro Release, eine kleine
   Flash-Seite auf GitHub Pages. Damit wird aus „man müsste mal" ein Nachmittag.
-- [ ] **Einrichtung ohne Neuflashen** — S
+- [x] **Einrichtung ohne Neuflashen** — passwortgeschützte Seite auf dem Leser, Link aus der Leserverwaltung · *noch nicht auf Hardware erprobt*
   WLAN, Serveradresse und Token stellt WiFiManager schon ein; das sollte
   dokumentiert und mit einem QR-Code aus dem Panel heraus vereinfacht werden.
 - [ ] **Referenz-Stückliste mit Preisen und Bezugsquellen** — S
@@ -193,6 +194,10 @@ Erst sinnvoll, wenn A, B2 und C stehen.
 
 ## Was zuerst?
 
-Wer hier anfangen will und nicht weiß wo: **das Änderungsprotokoll (A)** und
-**der Offline-Puffer (B1)**. Beides sind Fehler, die stillschweigend Daten
-verfälschen oder verlieren — alles andere ist Komfort dagegen.
+Wer hier anfangen will und nicht weiß wo: **das Änderungsprotokoll (A)**. Das
+ist der verbliebene Fehler, der stillschweigend Daten verfälscht — alles andere
+ist Komfort dagegen.
+
+Gleich danach: **die Firmware auf echter Hardware erproben**. Puffer, Upload und
+Konfigurationsseite sind geschrieben, aber noch nie auf einem Board gelaufen —
+in der Entwicklungsumgebung ließ sich die ESP32-Toolchain nicht laden.
