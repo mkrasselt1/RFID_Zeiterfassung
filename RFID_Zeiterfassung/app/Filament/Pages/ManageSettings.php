@@ -53,6 +53,7 @@ class ManageSettings extends Page implements HasForms
             'tracking_start' => Setting::get('tracking_start'),
             'overtime_format' => BalanceFormat::current(),
             'show_donation_link' => (bool) Setting::get('show_donation_link', true),
+            'device_auth_mode' => \App\Models\Device::authMode(),
             'break_rules' => \App\Models\Contract::globalBreakRules(),
             'balance_tolerance_minutes' => \App\Models\Contract::globalBalanceTolerance(),
             'operator_name' => $operator['name'] ?? '',
@@ -103,6 +104,18 @@ class ManageSettings extends Page implements HasForms
                             ->helperText('Gilt für alle Saldo-Werte: Dashboard, Arbeitszeitkonto, '
                                 .'Monatsbericht, PDF und CSV-Export. Ist, Soll und Pause bleiben h:mm.'),
                     ])->columns(2),
+                Section::make('Anmeldung der Leser')
+                    ->description('Wie ein Leser sein Token mitschickt. Im Header ist es '
+                        .'besser aufgehoben: in der Adresszeile landet es anschließend in '
+                        .'Server- und Proxy-Protokollen. Erst umstellen, wenn alle Leser '
+                        .'eine Firmware haben, die den Header beherrscht — sonst sperrt '
+                        .'man die eigenen Stempeluhren aus.')
+                    ->schema([
+                        \Filament\Forms\Components\Radio::make('device_auth_mode')
+                            ->label('Erlaubt ist')
+                            ->options(\App\Models\Device::AUTH_MODES)
+                            ->required(),
+                    ]),
                 Section::make('Toleranz')
                     ->description('Kleine Tagesabweichungen sollen sich nicht zu einem Saldo '
                         .'aufsummieren. Der Wert ist eine Schwelle, kein Abzug: darunter zählt '
@@ -171,6 +184,7 @@ class ManageSettings extends Page implements HasForms
         Setting::put('tracking_start', $data['tracking_start'] ?: null);
         Setting::put('overtime_format', $data['overtime_format'] ?? BalanceFormat::DEFAULT);
         Setting::put('show_donation_link', (bool) ($data['show_donation_link'] ?? true));
+        Setting::put('device_auth_mode', $data['device_auth_mode'] ?? \App\Models\Device::AUTH_DEFAULT);
         // Das Format ist pro Request gemerkt — sonst zeigt die Seite nach dem
         // Speichern noch die alte Schreibweise.
         BalanceFormat::forget();

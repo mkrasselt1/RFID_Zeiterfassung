@@ -19,6 +19,9 @@ use Illuminate\Http\Response;
  *
  *   GET ?device_token=<16 hex>&card_uid=<8-32 hex>
  *
+ * Das Token darf stattdessen als `Authorization: Bearer <16 hex>` kommen; was
+ * erlaubt ist, entscheidet die Einstellung "Anmeldung der Leser".
+ *
  *   200 "login<username>"   check-in            200 "successful"  new card learned
  *   200 "logout<username>"  check-out           200 "available"   card already known
  *   503 "Error: <message>"  any failure (German messages preserved verbatim)
@@ -37,7 +40,7 @@ class DeviceApiController extends Controller
         $t = Carbon::now()->format('H:i:s');
 
         // Validate inputs exactly like the legacy filter_input regexes.
-        $device_uid = $this->validateHex($request->query('device_token'), '/\A[[:xdigit:]]{16}\z/');
+        $device_uid = $this->deviceToken($request);
         $card_uid = $this->validateHex($request->query('card_uid'), '/\A[[:xdigit:]]{8,32}\z/');
 
         if (! $card_uid || ! $device_uid) {
@@ -59,6 +62,31 @@ class DeviceApiController extends Controller
         $cAPI->persist();
 
         return $result;
+    }
+
+    /**
+     * The device token, from `Authorization: Bearer <token>` or the legacy
+     * `?device_token=` query parameter, whichever the operator allows.
+     *
+     * Der Header ist der bessere Weg: ein Token in der Adresszeile steht
+     * anschließend in Server- und Proxy-Protokollen. Die Adresszeile bleibt
+     * trotzdem wählbar, weil ausgelieferte Firmware sie nutzt und nicht jeder
+     * Betrieb seine Leser an einem Tag umflashen kann.
+     */
+    private function deviceToken(Request $request): ?string
+    {
+        $mode = Device::authMode();
+        $pattern = '/\A[[:xdigit:]]{16}\z/';
+
+        if ($mode !== Device::AUTH_QUERY && ($bearer = $request->bearerToken()) !== null) {
+            return $this->validateHex($bearer, $pattern);
+        }
+
+        if ($mode !== Device::AUTH_BEARER) {
+            return $this->validateHex($request->query('device_token'), $pattern);
+        }
+
+        return null;
     }
 
     private function handleTimeMode(Device $device, string $card_uid, string $d, string $t, GoogleCalendarApi $cAPI, string $timezone): Response

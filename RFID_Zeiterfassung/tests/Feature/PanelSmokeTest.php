@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Absence;
 use App\Models\Contract;
+use App\Models\Device;
 use App\Models\Employee;
 use App\Models\Setting;
 use App\Models\UserLog;
@@ -64,6 +65,58 @@ class PanelSmokeTest extends TestCase
         foreach ($managerOnly as $url) {
             $this->actingAs($employee)->get($url)->assertForbidden();
         }
+    }
+
+    /** The token may travel in the Authorization header instead of the URL. */
+    public function test_device_api_accepts_a_bearer_token(): void
+    {
+        $this->seed();
+
+        $this->withHeader('Authorization', 'Bearer a1b2c3d4e5f60718')
+            ->get('/getdata.php?card_uid=deadbeef')
+            ->assertStatus(200)
+            ->assertSee('Max Mustermann');
+    }
+
+    /**
+     * Which way is allowed is the operator's choice: switching to header-only
+     * locks out firmware that still puts the token in the URL, which is the
+     * point — but it must not happen by accident.
+     *
+     * @dataProvider deviceAuthModeCases
+     */
+    public function test_device_auth_mode_decides_which_way_is_accepted(
+        string $mode, bool $queryWorks, bool $bearerWorks
+    ): void {
+        $this->seed();
+        Setting::put('device_auth_mode', $mode);
+
+        $viaQuery = $this->get('/getdata.php?device_token=a1b2c3d4e5f60718&card_uid=deadbeef');
+        $this->assertSame($queryWorks ? 200 : 503, $viaQuery->getStatusCode(), "Adresszeile bei {$mode}");
+
+        $viaHeader = $this->withHeader('Authorization', 'Bearer a1b2c3d4e5f60718')
+            ->get('/getdata.php?card_uid=beefcafe');
+        $this->assertSame($bearerWorks ? 200 : 503, $viaHeader->getStatusCode(), "Header bei {$mode}");
+    }
+
+    public static function deviceAuthModeCases(): array
+    {
+        return [
+            'beides erlaubt' => [Device::AUTH_BOTH, true, true],
+            'nur Header' => [Device::AUTH_BEARER, false, true],
+            'nur Adresszeile' => [Device::AUTH_QUERY, true, false],
+            'kaputter Wert faellt auf beides zurueck' => ['bogus', true, true],
+        ];
+    }
+
+    /** A malformed bearer token is rejected like a malformed query one. */
+    public function test_device_api_rejects_a_malformed_bearer_token(): void
+    {
+        $this->seed();
+
+        $this->withHeader('Authorization', 'Bearer not-hex')
+            ->get('/getdata.php?card_uid=deadbeef')
+            ->assertStatus(503)->assertSee('Error: Ungueltige Anfrage');
     }
 
     public function test_device_api_two_cards_resolve_to_same_employee(): void

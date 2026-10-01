@@ -43,7 +43,13 @@ The `admin` table gains one additive nullable column (`remember_token`); run
 ## Device API (unchanged contract)
 
 `GET /getdata.php?device_token=<16 hex>&card_uid=<8–32 hex>` — same params,
-responses and status codes as the legacy `getdata.php`:
+responses and status codes as the legacy `getdata.php`.
+
+The token may instead travel as `Authorization: Bearer <16 hex>`, which keeps it
+out of server and proxy logs. *Einstellungen → Anmeldung der Leser* decides what
+is accepted: both (default), header only, or query only. Switch to header-only
+once every reader runs firmware that sends it — otherwise you lock out your own
+clocks.
 
 | Result | Status | Body |
 |---|---|---|
