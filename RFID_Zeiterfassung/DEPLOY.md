@@ -111,6 +111,13 @@ php /var/www/vhosts/arbeitszeit.kaffeeteam.de/httpdocs/RFID_Zeiterfassung/artisa
 
 (Treibt den nächtlichen `worktime:recalc` und den jährlichen `holidays:sync`.)
 
+## Schema-Update ohne SSH
+
+Wo `php artisan migrate --force` nicht läuft, liegt das passende SQL unter
+`database/manual/` — eine Datei je Stand, erzeugt aus den Migrationen, samt der
+Einträge für die `migrations`-Tabelle. Vorher sichern; MySQL rollt DDL nicht
+zurück.
+
 ## Bei jedem weiteren Deploy
 
 1. Code aktualisieren (Git-Pull/FTP).
