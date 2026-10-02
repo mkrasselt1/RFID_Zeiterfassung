@@ -44,11 +44,15 @@ class WorktimeService
      *
      * @return array{gross:int, stamped_break:int, break:int, net:int}
      */
-    public function dayMinutes(Employee $employee, CarbonInterface $date): array
+    public function dayMinutes(Employee $employee, CarbonInterface $date, ?RecalculationWindow $window = null): array
     {
-        $logs = UserLog::where('employee_id', $employee->id)
-            ->where('checkindate', $date->toDateString())
-            ->get();
+        // Aus dem vorgeladenen Fenster, wenn es eines gibt — sonst wären es bei
+        // einer Neuberechnung über Jahre Tausende Einzelabfragen.
+        $logs = $window
+            ? $window->logsOn($date->toDateString())
+            : UserLog::where('employee_id', $employee->id)
+                ->where('checkindate', $date->toDateString())
+                ->get();
 
         $spans = [];
         $gross = 0;
@@ -65,8 +69,13 @@ class WorktimeService
         }
 
         $stamped = $this->gapMinutes($spans);
-        $rules = $employee->activeContractOn(Carbon::parse($date->toDateString()))?->breakRules()
-            ?? Contract::globalBreakRules();
+        // Auch die Pausenstaffel hängt am Vertrag — ohne das Fenster wäre das
+        // eine zweite Vertragsabfrage je Tag, zusätzlich zu der in
+        // recalculateDay().
+        $contract = $window
+            ? $window->contractOn($date->toDateString())
+            : $employee->activeContractOn(Carbon::parse($date->toDateString()));
+        $rules = $contract?->breakRules() ?? Contract::globalBreakRules();
         $deduction = $this->breakDeduction($gross, $stamped, $rules);
 
         return [
@@ -196,24 +205,25 @@ class WorktimeService
      * existing row) for fully empty days, so weekends, future and contract-less
      * days don't clutter the account.
      */
-    public function recalculateDay(Employee $employee, CarbonInterface $date): ?WorkDay
-    {
+    public function recalculateDay(
+        Employee $employee, CarbonInterface $date, ?RecalculationWindow $window = null
+    ): ?WorkDay {
         $day = Carbon::parse($date->toDateString());
+        $key = $day->toDateString();
 
         // Global "tracking active from" cut-off: days before go-live never build
         // a balance (guards against a mis-set contract start far in the past).
-        $start = Setting::get('tracking_start');
-        if ($start && $day->toDateString() < $start) {
-            WorkDay::where('employee_id', $employee->id)
-                ->where('work_date', $day->toDateString())->delete();
+        $start = $window?->trackingStart ?? Setting::get('tracking_start');
+        if ($start && $key < $start) {
+            $this->dropDay($employee, $key, $window);
 
             return null;
         }
 
-        $minutes = $this->dayMinutes($employee, $date);
+        $minutes = $this->dayMinutes($employee, $date, $window);
         $worked = $minutes['net'];
-        $contract = $employee->activeContractOn($day);
-        $absence = $this->approvedAbsenceOn($employee, $date);
+        $contract = $window ? $window->contractOn($key) : $employee->activeContractOn($day);
+        $absence = $window ? $window->absenceOn($key) : $this->approvedAbsenceOn($employee, $date);
 
         // Expected time only within a contract, and not for future days.
         $expected = ($contract && ! $day->isAfter(Carbon::today()))
@@ -251,43 +261,146 @@ class WorktimeService
 
         $balance = $this->applyTolerance(
             $rawBalance,
-            $contract?->balanceTolerance() ?? Contract::globalBalanceTolerance(),
+            $contract?->balanceTolerance()
+                ?? $window?->globalTolerance
+                ?? Contract::globalBalanceTolerance(),
         );
 
         // Drop completely empty days (no work, no Soll, no absence).
         if ($minutes['gross'] === 0 && $storedExpected === 0 && $absence === null) {
-            WorkDay::where('employee_id', $employee->id)
-                ->where('work_date', $day->toDateString())->delete();
+            $this->dropDay($employee, $key, $window);
 
             return null;
         }
 
+        $values = [
+            'gross_minutes' => $minutes['gross'],
+            'break_minutes' => $minutes['break'],
+            'worked_minutes' => $worked,
+            'expected_minutes' => $storedExpected,
+            'balance_minutes' => $balance,
+            'raw_balance_minutes' => $rawBalance,
+            'absence_id' => $absence?->id,
+        ];
+
+        // Mit vorgeladener Zeile genügt ein Schreibvorgang; updateOrCreate
+        // müsste sie erst suchen.
+        if ($window !== null) {
+            $row = $window->existingOn($key);
+            if ($row === null) {
+                $row = WorkDay::create(
+                    ['employee_id' => $employee->id, 'work_date' => $key] + $values
+                );
+            } else {
+                $row->fill($values);
+                if ($row->isDirty()) {
+                    $row->save();
+                }
+            }
+            $window->remember($key, $row);
+
+            return $row;
+        }
+
         return WorkDay::updateOrCreate(
-            ['employee_id' => $employee->id, 'work_date' => $day->toDateString()],
-            [
-                'gross_minutes' => $minutes['gross'],
-                'break_minutes' => $minutes['break'],
-                'worked_minutes' => $worked,
-                'expected_minutes' => $storedExpected,
-                'balance_minutes' => $balance,
-                'raw_balance_minutes' => $rawBalance,
-                'absence_id' => $absence?->id,
-            ],
+            ['employee_id' => $employee->id, 'work_date' => $key],
+            $values,
         );
+    }
+
+    /** Eine Ledger-Zeile entfernen, sofern es überhaupt eine gibt. */
+    private function dropDay(Employee $employee, string $date, ?RecalculationWindow $window): void
+    {
+        // Ohne vorhandene Zeile ist auch kein DELETE nötig — das spart bei einer
+        // Neuberechnung über Jahre eine Abfrage je Wochenendtag.
+        if ($window !== null && $window->existingOn($date) === null) {
+            return;
+        }
+
+        WorkDay::where('employee_id', $employee->id)->where('work_date', $date)->delete();
+        $window?->forget($date);
     }
 
     public function recalculateRange(Employee $employee, CarbonInterface $from, CarbonInterface $to): int
     {
         $cursor = Carbon::parse($from->toDateString());
         $end = Carbon::parse($to->toDateString());
+
+        // Einmal laden statt je Tag fragen.
+        $window = new RecalculationWindow($employee, $cursor, $end);
+
         $count = 0;
         while ($cursor->lte($end)) {
-            $this->recalculateDay($employee, $cursor);
+            $this->recalculateDay($employee, $cursor, $window);
             $cursor->addDay();
             $count++;
         }
 
         return $count;
+    }
+
+    /**
+     * Mehrere Mitarbeiter über einen Zeitraum neu berechnen, innerhalb eines
+     * Zeitbudgets.
+     *
+     * Eine Neuberechnung über Jahre lief in den Zeitausfall der Seite. Das
+     * Vorladen hat sie um ein Vielfaches beschleunigt, aber bei genug
+     * Mitarbeitern wäre sie irgendwann wieder zu lang — also arbeitet sie in
+     * Abschnitten und sagt, wo sie stehen geblieben ist. Der Aufrufer setzt
+     * beim zurückgegebenen `next` wieder an.
+     *
+     * Eine Einheit ist ein Mitarbeiterjahr: klein genug, dass eine einzelne
+     * nicht über das Budget hinausschießt, und groß genug, dass das Vorladen
+     * sich lohnt.
+     *
+     * @param  list<Employee>  $employees
+     * @return array{done:bool, next:int, units_done:int, units_total:int, days:int}
+     */
+    public function recalculateMany(
+        array $employees,
+        CarbonInterface $from,
+        CarbonInterface $to,
+        float $budgetSeconds = 15.0,
+        int $resumeAt = 0,
+    ): array {
+        $start = Carbon::parse($from->toDateString());
+        $end = Carbon::parse($to->toDateString());
+
+        // Die Einheiten einmal auflisten, damit `next` über Aufrufe hinweg
+        // dasselbe bedeutet.
+        $units = [];
+        foreach ($employees as $employee) {
+            $cursor = $start->copy();
+            while ($cursor->lte($end)) {
+                $yearEnd = min($cursor->copy()->endOfYear(), $end);
+                $units[] = [$employee, $cursor->copy(), $yearEnd->copy()];
+                $cursor = $yearEnd->copy()->addDay();
+            }
+        }
+
+        $began = microtime(true);
+        $days = 0;
+        $index = $resumeAt;
+
+        while ($index < count($units)) {
+            [$employee, $unitFrom, $unitTo] = $units[$index];
+            $days += $this->recalculateRange($employee, $unitFrom, $unitTo);
+            $index++;
+
+            // Nach jeder Einheit prüfen, nicht davor: so wird immer mindestens
+            // eine erledigt und der Fortschritt kommt nie zum Stillstand.
+            if (microtime(true) - $began >= $budgetSeconds) {
+                break;
+            }
+        }
+
+        return [
+            'done' => $index >= count($units),
+            'next' => $index,
+            'units_done' => $index,
+            'units_total' => count($units),
+            'days' => $days,
+        ];
     }
 
     /** Recompute every day covered by an absence (used on approve/reject). */

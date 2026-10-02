@@ -22,18 +22,48 @@ class Setting extends Model
 
     protected $fillable = ['key', 'value'];
 
+    /**
+     * Alle Einstellungen, einmal je Request geladen.
+     *
+     * Vorher war jedes `get()` eine eigene Abfrage. Bei einer Neuberechnung
+     * über Jahre waren das drei je Mitarbeitertag — mehr als die Stempelungen
+     * selbst. Die Tabelle hat eine Handvoll Zeilen; sie einmal zu holen ist in
+     * jedem Fall billiger.
+     *
+     * @var array<string, string>|null
+     */
+    private static ?array $cache = null;
+
     public static function get(string $key, mixed $default = null): mixed
     {
-        $row = static::find($key);
+        if (self::$cache === null) {
+            self::$cache = static::query()->pluck('value', 'key')->all();
+        }
 
-        return $row ? json_decode($row->value, true) : $default;
+        return array_key_exists($key, self::$cache)
+            ? json_decode(self::$cache[$key], true)
+            : $default;
+    }
+
+    /** Nach einer Änderung von außen (Tests, Importe, mehrere Prozesse). */
+    public static function flushCache(): void
+    {
+        self::$cache = null;
     }
 
     public static function put(string $key, mixed $value): void
     {
+        $encoded = json_encode($value);
+
         static::updateOrCreate(
             ['key' => $key],
-            ['value' => json_encode($value)],
+            ['value' => $encoded],
         );
+
+        // Den Zwischenspeicher gleich mitziehen, statt ihn zu verwerfen: sonst
+        // läse der nächste Zugriff die ganze Tabelle neu.
+        if (self::$cache !== null) {
+            self::$cache[$key] = $encoded;
+        }
     }
 }

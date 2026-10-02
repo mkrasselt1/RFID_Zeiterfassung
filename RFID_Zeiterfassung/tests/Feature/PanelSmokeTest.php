@@ -26,8 +26,9 @@ class PanelSmokeTest extends TestCase
         // The holiday lookup caches statically; reset it so DB rollbacks between
         // tests can't leak holidays into an unrelated test.
         \App\Models\Holiday::flushCache();
-        // Same for the memoized balance format.
+        // Same for the memoized balance format and the settings cache.
         \App\Services\BalanceFormat::forget();
+        \App\Models\Setting::flushCache();
     }
 
     private function makeEmployee(string $role = Employee::ROLE_EMPLOYEE, string $email = 'e@example.de'): Employee
@@ -1034,6 +1035,124 @@ class PanelSmokeTest extends TestCase
 
         Setting::put('show_donation_link', false);
         $this->actingAs($admin)->get('/admin')->assertDontSee('paypal.me/krasm');
+    }
+
+    /** Employee with a contract and a year of stampings, for the bulk tests. */
+    private function employeeWithStampings(string $email, string $from, string $to): Employee
+    {
+        $employee = $this->makeEmployeeWithVacation(30, email: $email);
+        $rows = [];
+        for ($d = Carbon::parse($from); $d->lte(Carbon::parse($to)); $d->addDay()) {
+            if ($d->isWeekend()) {
+                continue;
+            }
+            $rows[] = [
+                'employee_id' => $employee->id, 'card_uid' => 'C'.$employee->id,
+                'device_uid' => 'a1b2c3d4e5f60718', 'device_dep' => 'All',
+                'checkindate' => $d->toDateString(), 'timein' => '08:00:00',
+                'timeout' => '16:45:00', 'card_out' => 1,
+            ];
+        }
+        \App\Models\UserLog::insert($rows);
+
+        return $employee;
+    }
+
+    /**
+     * The preloading rewrite must not change a single number. Compares the
+     * fast path against the day-by-day one it replaced.
+     */
+    public function test_preloaded_recalculation_matches_the_day_by_day_result(): void
+    {
+        $this->travelTo(Carbon::parse('2026-06-01 12:00:00'));
+        $employee = $this->employeeWithStampings('bulk@example.de', '2026-01-01', '2026-03-31');
+        $this->approveVacation($employee, '2026-02-09', '2026-02-13');
+        $service = app(WorktimeService::class);
+
+        $service->recalculateRange($employee, Carbon::parse('2026-01-01'), Carbon::parse('2026-03-31'));
+        $fast = $employee->workDays()->orderBy('work_date')
+            ->get(['work_date', 'worked_minutes', 'expected_minutes', 'balance_minutes', 'break_minutes'])
+            ->map->toArray()->all();
+
+        // Noch einmal, aber Tag für Tag und ohne vorgeladenes Fenster.
+        $employee->workDays()->delete();
+        for ($d = Carbon::parse('2026-01-01'); $d->lte(Carbon::parse('2026-03-31')); $d->addDay()) {
+            $service->recalculateDay($employee, $d);
+        }
+        $slow = $employee->workDays()->orderBy('work_date')
+            ->get(['work_date', 'worked_minutes', 'expected_minutes', 'balance_minutes', 'break_minutes'])
+            ->map->toArray()->all();
+
+        $this->assertNotEmpty($fast);
+        $this->assertSame($slow, $fast);
+    }
+
+    /** Running it twice must not change anything the second time. */
+    public function test_recalculation_is_stable_on_a_second_run(): void
+    {
+        $this->travelTo(Carbon::parse('2026-06-01 12:00:00'));
+        $employee = $this->employeeWithStampings('stable@example.de', '2026-01-01', '2026-02-28');
+        $service = app(WorktimeService::class);
+
+        $service->recalculateRange($employee, Carbon::parse('2026-01-01'), Carbon::parse('2026-02-28'));
+        $first = $employee->workDays()->orderBy('work_date')->get()->map->toArray()->all();
+
+        $service->recalculateRange($employee, Carbon::parse('2026-01-01'), Carbon::parse('2026-02-28'));
+        $second = $employee->workDays()->orderBy('work_date')->get()->map->toArray()->all();
+
+        $this->assertSame($first, $second);
+    }
+
+    /**
+     * Resuming must cover every unit exactly once — a chunked run that skips
+     * or repeats a stretch would leave the account wrong.
+     */
+    public function test_chunked_run_covers_everything_when_resumed(): void
+    {
+        $this->travelTo(Carbon::parse('2027-06-01 12:00:00'));
+        $a = $this->employeeWithStampings('chunk-a@example.de', '2025-01-01', '2026-12-31');
+        $b = $this->employeeWithStampings('chunk-b@example.de', '2025-01-01', '2026-12-31');
+        $service = app(WorktimeService::class);
+
+        $from = Carbon::parse('2025-01-01');
+        $to = Carbon::parse('2026-12-31');
+
+        // Budget 0 erzwingt den kleinstmöglichen Schritt: eine Einheit je Aufruf.
+        $next = 0;
+        $calls = 0;
+        do {
+            $p = $service->recalculateMany([$a, $b], $from, $to, budgetSeconds: 0.0, resumeAt: $next);
+            $next = $p['next'];
+            $calls++;
+            $this->assertLessThan(20, $calls, 'Fortsetzen kommt nicht voran');
+        } while (! $p['done']);
+
+        $this->assertSame(4, $p['units_total'], '2 Mitarbeiter x 2 Jahre');
+        $this->assertSame(4, $calls, 'je Aufruf genau eine Einheit');
+
+        // Gegenprobe: in einem Rutsch muss dasselbe herauskommen.
+        $chunked = \App\Models\WorkDay::orderBy('employee_id')->orderBy('work_date')
+            ->get(['employee_id', 'work_date', 'balance_minutes'])->map->toArray()->all();
+
+        \App\Models\WorkDay::query()->delete();
+        $service->recalculateMany([$a, $b], $from, $to, budgetSeconds: 999.0);
+        $oneGo = \App\Models\WorkDay::orderBy('employee_id')->orderBy('work_date')
+            ->get(['employee_id', 'work_date', 'balance_minutes'])->map->toArray()->all();
+
+        $this->assertNotEmpty($chunked);
+        $this->assertSame($oneGo, $chunked);
+    }
+
+    /** Settings are cached per request; a write must be visible immediately. */
+    public function test_setting_cache_sees_its_own_writes(): void
+    {
+        $this->assertSame('Europe/Berlin', Setting::get('timezone', 'Europe/Berlin'));
+
+        Setting::put('timezone', 'Europe/Lisbon');
+        $this->assertSame('Europe/Lisbon', Setting::get('timezone'), 'ohne Neuladen sichtbar');
+
+        Setting::flushCache();
+        $this->assertSame('Europe/Lisbon', Setting::get('timezone'), 'auch nach dem Verwerfen');
     }
 
     /**

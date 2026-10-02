@@ -114,14 +114,57 @@ class WorkDayResource extends Resource
                         Forms\Components\DatePicker::make('from')->label('Von')->default(now()->startOfMonth())->required(),
                         Forms\Components\DatePicker::make('to')->label('Bis')->default(now())->required(),
                     ])
-                    ->action(function (array $data) {
-                        $service = app(WorktimeService::class);
-                        $from = Carbon::parse($data['from']);
-                        $to = Carbon::parse($data['to']);
-                        Employee::all()->each(fn (Employee $e) => $service->recalculateRange($e, $from, $to));
-                        Notification::make()->title('Arbeitszeitkonto neu berechnet')->success()->send();
-                    }),
+                    ->action(fn (array $data) => static::runRecalculation($data)),
             ]);
+    }
+
+    /**
+     * Neuberechnung in Abschnitten, damit mehrere Jahre nicht in den
+     * Zeitausfall der Seite laufen.
+     *
+     * Das Zeitbudget liegt bewusst unter dem üblichen Limit von 30 Sekunden.
+     * Reicht es nicht, merkt sich die Seite den Stand und sagt, wie weit sie
+     * gekommen ist — ein weiterer Klick setzt dort an, statt von vorn zu
+     * beginnen. Der Stand hängt am Zeitraum: wird ein anderer gewählt, fängt
+     * die Zählung neu an.
+     */
+    protected static function runRecalculation(array $data): void
+    {
+        $from = Carbon::parse($data['from']);
+        $to = Carbon::parse($data['to']);
+
+        $key = 'worktime.recalc.'.md5($from->toDateString().'|'.$to->toDateString());
+        $resumeAt = (int) session($key, 0);
+
+        $progress = app(WorktimeService::class)->recalculateMany(
+            Employee::orderBy('id')->get()->all(),
+            $from,
+            $to,
+            budgetSeconds: 15.0,
+            resumeAt: $resumeAt,
+        );
+
+        if ($progress['done']) {
+            session()->forget($key);
+            Notification::make()
+                ->title('Arbeitszeitkonto neu berechnet')
+                ->body($progress['units_total'].' Mitarbeiterjahre, '.$progress['days'].' Tage.')
+                ->success()
+                ->send();
+
+            return;
+        }
+
+        session([$key => $progress['next']]);
+
+        Notification::make()
+            ->title('Teilweise neu berechnet')
+            ->body($progress['units_done'].' von '.$progress['units_total'].' Mitarbeiterjahren erledigt. '
+                .'Nochmal auf „Neu berechnen" klicken, um fortzusetzen — der Rest wird dort '
+                .'aufgenommen, wo es aufgehört hat.')
+            ->warning()
+            ->persistent()
+            ->send();
     }
 
     /** Monthly aggregate per employee: one row per (employee, month). */
