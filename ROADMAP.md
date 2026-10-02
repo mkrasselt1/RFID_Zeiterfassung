@@ -106,24 +106,46 @@ sein und das Gerät zuverlässig.
   Heute sind MFRC522 und SSD1306 fest verdrahtet (`main.cpp`, 496 Zeilen).
   Getrennte Schnittstellen für „Karte lesen" und „etwas anzeigen" erlauben
   mehrere Boards aus einer Codebasis, statt die Firmware zu gabeln.
-- [ ] **Variante M5Stack Dial** — M · *vielversprechend, vorher prüfen*
-  Fertiges Gerät mit Gehäuse, rundem Touch-Display, Drehencoder und eingebautem
-  RFID-Leser — kein Steckbrett, kein Löten, ein Kabel. Für einen Betrieb sieht
-  das nach Produkt aus, nicht nach Bastelei, und das entscheidet mit darüber, ob
-  jemand es an die Wand hängt.
-  Zu klären, bevor wir das empfehlen: Der eingebaute Leser ist **nicht** der
-  MFRC522, die Lesebibliothek muss also ausgetauscht werden — darum steht die
-  Schnittstelle oben zuerst. Außerdem zu prüfen: welche Kartentypen er liest
-  (die vorhandenen Werksausweise müssen funktionieren), ob eine Echtzeituhr
-  verbaut ist, Stromversorgung über Dauerbetrieb, und der tatsächliche Preis.
-  Ein Testgerät kaufen und einen Tag damit verbringen, bevor es in die Stückliste
-  kommt.
+- [ ] **Variante M5Stack Dial** — M · *gutes Gehäuse, schwacher Leser*
+  Fertiges Gerät mit Gehäuse, rundem Touch-Display (1,28", 240×240, GC9A01),
+  Drehencoder und eingebautem RFID-Leser — kein Steckbrett, kein Löten. Für
+  einen Betrieb sieht das nach Produkt aus, nicht nach Bastelei, und das
+  entscheidet mit darüber, ob jemand es an die Wand hängt.
+
+  Nachgeschlagen (Herstellerangaben, Stand Oktober 2026):
+
+  - **ESP32-S3** (StampS3), 8 MB Flash, **kein PSRAM** — für unsere Firmware
+    reichlich.
+  - **Echtzeituhr BM8563** an G11/G12. Löst genau die offene Stelle beim
+    Offline-Puffer: nach einem Neustart ohne Netz weiß das Gerät wieder, wie
+    spät es ist.
+  - **Stromversorgung 6–36 V DC.** Für Wandmontage angenehm, ein beliebiges
+    Netzteil tut es.
+  - **Leser WS1850S**, 13,56 MHz, ISO14443A / MIFARE / NTAG — also **kein**
+    125 kHz. Ältere Werksausweise (EM4100, HID Prox) liest er prinzipbedingt
+    nicht.
+  - **Lesedistanz unter 20 mm — so spezifiziert.** Dass die Karte fest
+    angedrückt werden muss, ist kein Defekt, sondern das Datenblatt. Für eine
+    Stempeluhr, an der im Vorbeigehen gehalten wird, ist das die Schwachstelle.
+    Der Chip gilt außerdem in der ESPHome-Gemeinde als unzuverlässig.
+  - Das ursprüngliche Modell ist abgekündigt; **v1.1** ist der Nachfolger. Die
+    dort verbesserte Antenne ist die des Funkmoduls, nicht die des Lesers —
+    an der Lesedistanz ändert sich nichts.
+
+  Daraus folgt: als Kopf (Gehäuse, Anzeige, Uhr, Stromversorgung) gut, als
+  alleiniger Leser nur dort, wo das Auflegen zumutbar ist. Für eine
+  Empfehlung an andere Betriebe besser mit externem Leser an Port A (I2C)
+  kombinieren und die Antenne dorthin setzen, wo sie gut liest. Darum steht
+  die Schnittstelle für Leser und Anzeige oben zuerst: der WS1850S braucht
+  ohnehin eine andere Bibliothek als der MFRC522.
 - [ ] **Günstigste Variante dokumentieren** — S
   ESP32 plus MFRC522 plus OLED bleibt die Sparvariante. Beide Wege nebeneinander
   beschreiben, mit ehrlichem Vergleich.
 - [ ] **Kartentypen und Werksausweise** — M
   Welche Karten funktionieren, welche nicht. Viele Betriebe haben schon Ausweise
-  und wollen die weiter nutzen — das kann den Ausschlag geben.
+  und wollen die weiter nutzen — das kann den Ausschlag geben. Erste Frage an
+  jeden Interessenten: 13,56 MHz oder 125 kHz? Beide empfohlenen Aufbauten
+  lesen heute nur 13,56 MHz.
 - [ ] **Firmware-Aktualisierung über die Luft** — L
   Bei mehreren Geräten im Betrieb will niemand mit dem Laptop herumlaufen.
 
