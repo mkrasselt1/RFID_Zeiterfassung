@@ -69,6 +69,11 @@ class UserLogResource extends Resource
                     ->placeholder('—')->searchable()->sortable(),
                 Tables\Columns\TextColumn::make('employee.personnel_number')->label('Pers.-Nr.')->placeholder('—'),
                 Tables\Columns\TextColumn::make('card_uid')->label('Karten-UID')->fontFamily('mono')->toggleable(),
+                // Sichtbar machen, was ohne Karte entstand: eine Stempelung über
+                // die Namensliste belegt weniger als eine mit Chip.
+                Tables\Columns\TextColumn::make('source')->label('Erfasst über')->badge()
+                    ->formatStateUsing(fn (?string $state) => \App\Models\UserLog::SOURCES[$state] ?? 'Karte')
+                    ->color(fn (?string $state) => $state === \App\Models\UserLog::SOURCE_KIOSK ? 'warning' : 'gray'),
                 Tables\Columns\TextColumn::make('device_dep')->label('Abteilung')->searchable(),
                 Tables\Columns\TextColumn::make('checkindate')->label('Datum')->date('d.m.Y')->sortable(),
                 Tables\Columns\TextColumn::make('timein')->label('Rein')

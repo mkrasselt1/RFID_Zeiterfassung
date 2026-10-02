@@ -65,6 +65,35 @@ class EmployeeResource extends Resource
                     ->options(['Male' => 'Männlich', 'Female' => 'Weiblich', 'None' => 'Keine Angabe']),
                 Forms\Components\TextInput::make('calendar_id')->label('Google Kalender-ID'),
             ])->columns(2),
+            Forms\Components\Section::make('Stempeln ohne Karte')
+                ->description('Für alle, die ihren Chip vergessen haben oder noch keinen '
+                    .'besitzen: am Leser den Namen aus einer Liste wählen und mit einer PIN '
+                    .'bestätigen. Nur freigeschaltete Personen stehen in dieser Liste, und '
+                    .'ohne gesetzte PIN bleibt die Freigabe wirkungslos — sonst könnte dort '
+                    .'jeder für jeden stempeln. So entstandene Zeiten sind im Zeiten-Log als '
+                    .'„Namensliste" gekennzeichnet.')
+                ->schema([
+                    Forms\Components\Toggle::make('kiosk_enabled')
+                        ->label('Darf ohne Karte stempeln')
+                        ->live(),
+                    Forms\Components\TextInput::make('kiosk_pin')
+                        ->label('PIN')
+                        ->password()
+                        ->revealable()
+                        ->numeric()
+                        ->minLength(4)
+                        ->maxLength(8)
+                        ->helperText(fn (?Employee $record) => filled($record?->kiosk_pin)
+                            ? 'Eine PIN ist gesetzt. Zum Ändern eine neue eintragen, sonst leer lassen.'
+                            : 'Vier bis acht Ziffern. Wird verschlüsselt gespeichert und ist '
+                                .'danach nicht mehr einsehbar.')
+                        // Leer gelassen heißt "unverändert", nicht "löschen" —
+                        // sonst verlöre ein Speichern der Stammdaten die PIN.
+                        ->dehydrated(fn (?string $state) => filled($state))
+                        ->required(fn (Forms\Get $get, ?Employee $record) => $get('kiosk_enabled')
+                            && blank($record?->kiosk_pin))
+                        ->visible(fn (Forms\Get $get) => (bool) $get('kiosk_enabled')),
+                ])->columns(2),
         ]);
     }
 
@@ -75,6 +104,14 @@ class EmployeeResource extends Resource
                 Tables\Columns\TextColumn::make('name')->label('Name')->searchable()->sortable(),
                 Tables\Columns\TextColumn::make('email')->label('E-Mail')->searchable(),
                 Tables\Columns\TextColumn::make('personnel_number')->label('Pers.-Nr.')->toggleable(),
+                Tables\Columns\IconColumn::make('kiosk_enabled')->label('Ohne Karte')
+                    ->boolean()
+                    ->tooltip(fn (Employee $r) => $r->canStampWithoutCard()
+                        ? 'Darf über die Namensliste stempeln'
+                        : ($r->kiosk_enabled ? 'Freigeschaltet, aber ohne PIN — wirkungslos' : null))
+                    ->color(fn (Employee $r) => $r->canStampWithoutCard() ? 'success'
+                        : ($r->kiosk_enabled ? 'warning' : 'gray'))
+                    ->toggleable(),
                 Tables\Columns\TextColumn::make('role')->label('Rolle')->badge()
                     ->formatStateUsing(fn (string $state) => match ($state) {
                         Employee::ROLE_ADMIN => 'Administrator',

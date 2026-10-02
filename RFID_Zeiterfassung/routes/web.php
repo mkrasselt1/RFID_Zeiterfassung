@@ -3,6 +3,7 @@
 use App\Http\Controllers\DeviceApiController;
 use App\Http\Controllers\DeviceStampingController;
 use App\Http\Controllers\GoogleOAuthController;
+use App\Http\Controllers\KioskController;
 use App\Http\Controllers\ReportController;
 use Illuminate\Support\Facades\Route;
 
@@ -29,6 +30,16 @@ Route::get('/getdata', [DeviceApiController::class, 'handle']);
 Route::post('/api/v1/stampings', [DeviceStampingController::class, 'store'])
     ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class])
     ->name('api.stampings');
+
+// Stempeln ohne Karte: Namen am Drehrad wählen, PIN eingeben. Eigener Pfad,
+// weil hier anders geprüft wird — und weil die PIN nur online geht, während
+// der Weg oben auch ohne Netz trägt.
+Route::prefix('api/v1/kiosk')
+    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class])
+    ->group(function () {
+        Route::get('/employees', [KioskController::class, 'employees'])->name('api.kiosk.employees');
+        Route::post('/stampings', [KioskController::class, 'store'])->name('api.kiosk.stampings');
+    });
 
 // Google OAuth callback (replaces legacy google-login.php).
 Route::get('/google/connect', [GoogleOAuthController::class, 'connect'])->name('google.connect');

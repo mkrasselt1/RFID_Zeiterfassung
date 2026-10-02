@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Cardholder;
 use App\Models\Device;
+use App\Models\Employee;
 use App\Models\Setting;
 use App\Models\UserLog;
 use Carbon\Carbon;
@@ -144,6 +145,67 @@ class DeviceStamping
         }
 
         return new StampingResult(self::FAILED, message: 'SQL Checkin Fehler');
+    }
+
+    /**
+     * Ein- oder Auschecken ohne Karte: Name am Drehrad gewählt, PIN geprüft.
+     *
+     * Dieselben Regeln wie bei der Karte, nur ohne Kartenprüfung — der offene
+     * Eintrag wird hier über den Mitarbeiter gesucht, nicht über eine Karte.
+     * Damit passt ein Auschecken über die Namensliste auch zu einem
+     * Einchecken, das morgens mit dem Chip entstand.
+     */
+    public function recordForEmployee(Device $device, Employee $employee, Carbon $at): StampingResult
+    {
+        $d = $at->format('Y-m-d');
+        $t = $at->format('H:i:s');
+
+        $log = $this->openLogForEmployee($employee, $d);
+
+        if (! is_null($log)) {
+            $log->timeout = $t;
+            $log->card_out = 1;
+            if ($log->save()) {
+                return new StampingResult(self::CHECKOUT, $employee->name, userLogId: $log->id);
+            }
+
+            return new StampingResult(self::FAILED, message: 'SQL Checkout Fehler');
+        }
+
+        $log = new UserLog([
+            'employee_id' => $employee->id,
+            // Ohne Karte gibt es keine UID; die Herkunft steht in `source`.
+            'card_uid' => '',
+            'device_uid' => $device->device_uid,
+            'device_dep' => $device->device_dep,
+            'checkindate' => $d,
+            'timein' => $t,
+            'timeout' => 0,
+            'source' => UserLog::SOURCE_KIOSK,
+        ]);
+
+        if ($log->save()) {
+            return new StampingResult(self::CHECKIN, $employee->name, userLogId: $log->id);
+        }
+
+        return new StampingResult(self::FAILED, message: 'SQL Checkin Fehler');
+    }
+
+    /** Offener Eintrag des Mitarbeiters: heute, sonst gestern. */
+    private function openLogForEmployee(Employee $employee, string $d): ?UserLog
+    {
+        $log = UserLog::where('employee_id', $employee->id)
+            ->where('checkindate', $d)
+            ->where('card_out', 0)
+            ->first();
+        if (! is_null($log)) {
+            return $log;
+        }
+
+        return UserLog::where('employee_id', $employee->id)
+            ->where('checkindate', Carbon::parse($d)->subDay()->toDateString())
+            ->where('card_out', 0)
+            ->first();
     }
 
     private function learn(Device $device, string $cardUid, Carbon $at): StampingResult

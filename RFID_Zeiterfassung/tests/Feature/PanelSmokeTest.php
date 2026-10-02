@@ -1155,6 +1155,157 @@ class PanelSmokeTest extends TestCase
         $this->assertSame('Europe/Lisbon', Setting::get('timezone'), 'auch nach dem Verwerfen');
     }
 
+    private function kioskEmployee(string $email, string $pin = '1234', bool $enabled = true): Employee
+    {
+        $employee = $this->makeEmployee(Employee::ROLE_EMPLOYEE, $email);
+        $employee->update(['kiosk_enabled' => $enabled, 'kiosk_pin' => $pin]);
+
+        return $employee->fresh();
+    }
+
+    private function kiosk(string $method, string $path, array $body = [], string $token = 'a1b2c3d4e5f60718')
+    {
+        return $this->withHeader('Authorization', "Bearer {$token}")
+            ->json($method, "/api/v1/kiosk{$path}", $body);
+    }
+
+    /** The list shows only who may actually use it. */
+    public function test_kiosk_list_only_shows_released_employees_with_a_pin(): void
+    {
+        $this->seed();
+        $ready = $this->kioskEmployee('ready@example.de');
+        $noPin = $this->makeEmployee(Employee::ROLE_EMPLOYEE, 'nopin@example.de');
+        $noPin->update(['kiosk_enabled' => true]);              // freigeschaltet, aber ohne PIN
+        $this->kioskEmployee('off@example.de', enabled: false); // PIN, aber nicht freigeschaltet
+        $inactive = $this->kioskEmployee('gone@example.de');
+        $inactive->update(['is_active' => false]);
+
+        $r = $this->kiosk('GET', '/employees')->assertStatus(200);
+
+        $names = collect($r->json('employees'))->pluck('name')->all();
+        $this->assertSame([$ready->name], $names);
+        // Die Liste trägt Namen, sonst nichts — keine PIN, keine Mailadresse.
+        $this->assertSame(['id', 'name'], array_keys($r->json('employees.0')));
+    }
+
+    /** Pick a name, enter the PIN, and the day starts — then ends. */
+    public function test_kiosk_checks_in_and_out(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-02 07:30:00'));
+        $employee = $this->kioskEmployee('kiosk@example.de');
+
+        $this->kiosk('POST', '/stampings', ['employee_id' => $employee->id, 'pin' => '1234'])
+            ->assertStatus(200)
+            ->assertJsonPath('status', 'checkin')
+            ->assertJsonPath('name', $employee->name);
+
+        $this->travelTo(Carbon::parse('2026-10-02 16:15:00'));
+        $this->kiosk('POST', '/stampings', ['employee_id' => $employee->id, 'pin' => '1234'])
+            ->assertStatus(200)->assertJsonPath('status', 'checkout');
+
+        $log = \App\Models\UserLog::where('employee_id', $employee->id)->sole();
+        $this->assertSame('07:30:00', substr((string) $log->timein, 0, 8));
+        $this->assertSame('16:15:00', substr((string) $log->timeout, 0, 8));
+        $this->assertSame(\App\Models\UserLog::SOURCE_KIOSK, $log->source, 'als ohne Karte erkennbar');
+    }
+
+    /** Checked in with the chip, out via the list — must find the same entry. */
+    public function test_kiosk_checkout_closes_a_card_checkin(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-02 07:00:00'));
+        $employee = Employee::where('email', 'max@example.de')->first();
+        $employee->update(['kiosk_enabled' => true, 'kiosk_pin' => '4321']);
+
+        $this->get('/getdata.php?device_token=a1b2c3d4e5f60718&card_uid=deadbeef')->assertStatus(200);
+
+        $this->travelTo(Carbon::parse('2026-10-02 17:00:00'));
+        $this->kiosk('POST', '/stampings', ['employee_id' => $employee->id, 'pin' => '4321'])
+            ->assertStatus(200)->assertJsonPath('status', 'checkout');
+
+        $log = \App\Models\UserLog::where('employee_id', $employee->id)->sole();
+        $this->assertSame('17:00:00', substr((string) $log->timeout, 0, 8));
+        $this->assertSame(\App\Models\UserLog::SOURCE_CARD, $log->source, 'begonnen hat sie die Karte');
+    }
+
+    /**
+     * Every way of not being allowed answers the same, so the device cannot be
+     * used to find out who has a PIN.
+     *
+     * @dataProvider kioskRefusalCases
+     */
+    public function test_kiosk_refuses_without_telling_why(string $case): void
+    {
+        $this->seed();
+
+        $employee = match ($case) {
+            'falsche PIN' => $this->kioskEmployee('a@example.de'),
+            'nicht freigeschaltet' => $this->kioskEmployee('b@example.de', enabled: false),
+            'keine PIN gesetzt' => tap($this->makeEmployee(Employee::ROLE_EMPLOYEE, 'c@example.de'),
+                fn ($e) => $e->update(['kiosk_enabled' => true])),
+            'inaktiv' => tap($this->kioskEmployee('d@example.de'),
+                fn ($e) => $e->update(['is_active' => false])),
+        };
+        $pin = $case === 'falsche PIN' ? '9999' : '1234';
+
+        $r = $this->kiosk('POST', '/stampings', ['employee_id' => $employee->id, 'pin' => $pin]);
+
+        $r->assertStatus(403)->assertJsonPath('error', 'PIN falsch');
+        $this->assertSame(0, \App\Models\UserLog::where('employee_id', $employee->id)->count());
+    }
+
+    public static function kioskRefusalCases(): array
+    {
+        return [
+            'falsche PIN' => ['falsche PIN'],
+            'nicht freigeschaltet' => ['nicht freigeschaltet'],
+            'keine PIN gesetzt' => ['keine PIN gesetzt'],
+            'inaktiv' => ['inaktiv'],
+        ];
+    }
+
+    /** Guessing a four-digit PIN must not be worth trying. */
+    public function test_kiosk_locks_out_after_repeated_wrong_pins(): void
+    {
+        $this->seed();
+        $employee = $this->kioskEmployee('brute@example.de');
+
+        for ($i = 0; $i < 5; $i++) {
+            $this->kiosk('POST', '/stampings', ['employee_id' => $employee->id, 'pin' => '0000'])
+                ->assertStatus(403);
+        }
+
+        // Auch die richtige PIN kommt jetzt nicht mehr durch.
+        $this->kiosk('POST', '/stampings', ['employee_id' => $employee->id, 'pin' => '1234'])
+            ->assertStatus(429);
+        $this->assertSame(0, \App\Models\UserLog::where('employee_id', $employee->id)->count());
+    }
+
+    /** No device token, no list and no stamping. */
+    public function test_kiosk_needs_a_device_token(): void
+    {
+        $this->seed();
+        $employee = $this->kioskEmployee('tok@example.de');
+
+        $this->json('GET', '/api/v1/kiosk/employees')->assertStatus(401);
+        $this->json('POST', '/api/v1/kiosk/stampings',
+            ['employee_id' => $employee->id, 'pin' => '1234'])->assertStatus(401);
+        $this->kiosk('POST', '/stampings',
+            ['employee_id' => $employee->id, 'pin' => '1234'], token: 'ffffffffffffffff')
+            ->assertStatus(401);
+    }
+
+    /** The PIN is stored hashed, never in the clear. */
+    public function test_kiosk_pin_is_hashed(): void
+    {
+        $employee = $this->kioskEmployee('hash@example.de', pin: '5678');
+
+        $this->assertNotSame('5678', $employee->kiosk_pin);
+        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('5678', $employee->kiosk_pin));
+        $this->assertArrayNotHasKey('kiosk_pin', $employee->toArray(), 'nicht in Ausgaben');
+    }
+
     /**
      * @dataProvider dayFormatCases
      */

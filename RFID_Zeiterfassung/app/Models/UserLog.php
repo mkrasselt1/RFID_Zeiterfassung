@@ -30,6 +30,17 @@ class UserLog extends Model
         'timeout',
         'calendarEventId',
         'card_out',
+        'source',
+    ];
+
+    /** Wie die Stempelung entstand. */
+    public const SOURCE_CARD = 'card';
+
+    public const SOURCE_KIOSK = 'kiosk';
+
+    public const SOURCES = [
+        self::SOURCE_CARD => 'Karte',
+        self::SOURCE_KIOSK => 'Namensliste',
     ];
 
     // checkindate is intentionally left uncast: it is stored and compared as a

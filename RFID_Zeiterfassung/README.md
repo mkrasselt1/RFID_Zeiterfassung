@@ -94,6 +94,35 @@ Three things set it apart from the legacy endpoint:
   `device_events`, which doubles as the log of what each reader reported and how
   long it was offline.
 
+### Stamping without a card (`/api/v1/kiosk/…`)
+
+For anyone who forgot their chip or does not have one yet: pick a name from a
+list on the reader and confirm with a PIN. Same bearer token as above.
+
+```
+GET  /api/v1/kiosk/employees   → { "employees": [ { "id": 7, "name": "Max Mustermann" } ] }
+POST /api/v1/kiosk/stampings   { "employee_id": 7, "pin": "1234" }
+                               → { "status": "checkin", "name": "…", "server_time": "…" }
+```
+
+Two things keep this from becoming a way to stamp for someone else:
+
+- The list only contains people who are **released for it in the panel and have
+  a PIN set** (*Mitarbeiter → Stempeln ohne Karte*). A release without a PIN
+  stays inactive. The list carries names and ids, nothing else.
+- The **PIN is checked on the server**, never on the device — a four-digit
+  number would be recovered from a hash in seconds. Wrong PIN, no release, no
+  PIN set and unknown employee all answer the same `403 PIN falsch`, so the
+  reader cannot be used to probe who has one. Five wrong attempts per employee
+  and device lock it for five minutes.
+
+Because the PIN needs the server, this path does **not** work offline — unlike
+the buffered one above. That is deliberate: it is the exception, and whoever has
+their chip keeps stamping the way that survives a network outage.
+
+Every stamping made this way is marked `source = kiosk` and shows as
+*Namensliste* in the Zeiten-Log, so it stays visible that no card was involved.
+
 ## Employees, contracts, worktime & absences
 
 The app is employee-centric. **Employees log into the same panel**; what they see

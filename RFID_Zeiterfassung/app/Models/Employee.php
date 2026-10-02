@@ -27,14 +27,33 @@ class Employee extends Authenticatable implements FilamentUser, HasName
     protected $fillable = [
         'name', 'email', 'password', 'personnel_number', 'role',
         'supervisor_id', 'is_active', 'gender', 'calendar_id',
+        'kiosk_enabled', 'kiosk_pin',
     ];
 
-    protected $hidden = ['password', 'remember_token'];
+    protected $hidden = ['password', 'remember_token', 'kiosk_pin'];
 
     protected $casts = [
         'is_active' => 'boolean',
         'password' => 'hashed',
+        'kiosk_enabled' => 'boolean',
+        // Wie das Passwort: gehasht abgelegt, nie im Klartext.
+        'kiosk_pin' => 'hashed',
     ];
+
+    /**
+     * Darf diese Person ohne Karte stempeln — Name am Drehrad wählen, PIN
+     * eingeben?
+     *
+     * Beides muss stimmen: freigeschaltet *und* eine PIN gesetzt. Eine
+     * Freigabe ohne PIN wäre eine Namensliste, an der jeder für jeden
+     * stempeln kann.
+     */
+    public function canStampWithoutCard(): bool
+    {
+        return $this->kiosk_enabled
+            && $this->is_active
+            && filled($this->kiosk_pin);
+    }
 
     // --- Relations -------------------------------------------------------
 

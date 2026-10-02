@@ -138,6 +138,11 @@ sein und das Gerät zuverlässig.
   kombinieren und die Antenne dorthin setzen, wo sie gut liest. Darum steht
   die Schnittstelle für Leser und Anzeige oben zuerst: der WS1850S braucht
   ohnehin eine andere Bibliothek als der MFRC522.
+- [x] **Stempeln ohne Karte** — Namen am Drehrad wählen, PIN bestätigen.
+  Serverseite steht (`/api/v1/kiosk/…`), nur für im Panel freigeschaltete
+  Personen mit gesetzter PIN, Prüfung auf dem Server, Sperre nach fünf
+  Fehlversuchen, Kennzeichnung als „Namensliste" im Zeiten-Log. Fehlt noch:
+  die Bedienung am Gerät.
 - [ ] **Günstigste Variante dokumentieren** — S
   ESP32 plus MFRC522 plus OLED bleibt die Sparvariante. Beide Wege nebeneinander
   beschreiben, mit ehrlichem Vergleich.
