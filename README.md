@@ -33,7 +33,9 @@ ohne Lizenzkosten und ohne Nutzerlimit.
 Die Webanwendung liegt in [`RFID_Zeiterfassung/`](RFID_Zeiterfassung/) — dort
 stehen [Setup](RFID_Zeiterfassung/README.md) und
 [Deployment](RFID_Zeiterfassung/DEPLOY.md). Die Firmware für den Leser liegt in
-[`src/`](src/) und baut mit PlatformIO. `rfidattendance/` ist die abgelöste
+[`src/`](src/) und baut mit PlatformIO. In [`tracker/`](tracker/) liegt eine
+eigenständige Firmware für einen LTE-Tracker mit WLAN-Hotspot (LilyGO
+T-A7670/T-SIM7600, Anbindung an Home Assistant). `rfidattendance/` ist die abgelöste
 PHP-Fassung und wird nicht mehr weiterentwickelt.
 
 ## Was noch fehlt
