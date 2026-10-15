@@ -38,20 +38,41 @@ void powerInit() {
 #endif
 }
 
-PowerState powerRead() {
+PowerState powerRead(int modemMv) {
   static int smoothedMv = 0;
-  int mv = readMv(PIN_BATTERY_ADC, BATTERY_DIVIDER);
-  smoothedMv = smoothedMv == 0 ? mv : (smoothedMv * 3 + mv) / 4;
-
+  static bool wasOnVbus = false;
+  int adcMv = readMv(PIN_BATTERY_ADC, BATTERY_DIVIDER);
   PowerState s;
+
+#if BATTERY_ADC_ZERO_ON_VBUS
+  if (adcMv < BATTERY_ADC_ZERO_MV) {
+    // Am Netz: Teiler abgetrennt. Akkuspannung kommt dann vom Modem, das am
+    // selben Strang hängt — beim Laden liegt die über der Ruhespannung.
+    s.externalPower = true;
+    s.sensed = true;
+    s.charging = true;
+    wasOnVbus = true;
+    if (modemMv > 0) smoothedMv = modemMv;
+    s.batteryMv = smoothedMv;
+    s.batteryPercent = smoothedMv ? percentFromMv(smoothedMv) : 0;
+    return s;
+  }
+  // Gerade vom Netz: alter Wert stammt vom Laden, nicht mitteln.
+  if (wasOnVbus) {
+    smoothedMv = 0;
+    wasOnVbus = false;
+  }
+#endif
+
+  smoothedMv = smoothedMv == 0 ? adcMv : (smoothedMv * 3 + adcMv) / 4;
   s.batteryMv = smoothedMv;
   s.batteryPercent = percentFromMv(smoothedMv);
 #if PIN_POWER_SENSE >= 0
   s.externalPower = readMv(PIN_POWER_SENSE, POWER_SENSE_DIVIDER) >= POWER_SENSE_MIN_MV;
   s.sensed = true;
-#else
+#elif !BATTERY_ADC_ZERO_ON_VBUS
   s.externalPower = smoothedMv >= BATTERY_CHARGING_MV;
-  s.sensed = false;
 #endif
+  s.charging = s.externalPower;
   return s;
 }

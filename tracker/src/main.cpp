@@ -72,26 +72,43 @@ static String modemCmdRaw(const char *cmd, uint32_t timeoutMs) {
   return resp;
 }
 
-static void pulsePwrKey() {
+static void pulsePwrKey(uint32_t ms) {
   digitalWrite(PIN_MODEM_PWRKEY, LOW);
   delay(100);
   digitalWrite(PIN_MODEM_PWRKEY, HIGH);
-  delay(MODEM_PWRKEY_PULSE_MS);
+  delay(ms);
   digitalWrite(PIN_MODEM_PWRKEY, LOW);
 }
 
+static bool modemStatusOn() {
+#if PIN_MODEM_STATUS >= 0
+  return digitalRead(PIN_MODEM_STATUS) == HIGH;
+#else
+  return false;
+#endif
+}
+
 // Bringt das Modem in einen Zustand, in dem es auf AT antwortet. Nach einem
-// Neustart des ESP32 läuft es womöglich noch, dann im PPP-/CMUX-Modus — dann
-// hilft nur der Reset-Pin.
+// Neustart des ESP32 läuft es womöglich noch im PPP-/CMUX-Modus und versteht
+// kein AT mehr — dann zurücksetzen bzw. aus- und wieder einschalten.
 static bool modemPowerOn() {
   pinMode(PIN_BOARD_POWERON, OUTPUT);
   digitalWrite(PIN_BOARD_POWERON, HIGH);
   pinMode(PIN_MODEM_DTR, OUTPUT);
   digitalWrite(PIN_MODEM_DTR, LOW);  // LOW = nicht schlafen
+#if PIN_MODEM_FLIGHT >= 0
+  pinMode(PIN_MODEM_FLIGHT, OUTPUT);
+  digitalWrite(PIN_MODEM_FLIGHT, HIGH);  // Funk an
+#endif
+#if PIN_MODEM_STATUS >= 0
+  pinMode(PIN_MODEM_STATUS, INPUT);
+#endif
   pinMode(PIN_MODEM_PWRKEY, OUTPUT);
   digitalWrite(PIN_MODEM_PWRKEY, LOW);
+#if PIN_MODEM_RESET >= 0
   pinMode(PIN_MODEM_RESET, OUTPUT);
   digitalWrite(PIN_MODEM_RESET, !MODEM_RESET_LEVEL);
+#endif
 
   Serial1.begin(MODEM_BAUD, SERIAL_8N1, PIN_MODEM_RX, PIN_MODEM_TX);
 
@@ -100,24 +117,39 @@ static bool modemPowerOn() {
     return true;
   }
 
-  Serial.println("Modem zurücksetzen und einschalten");
+#if PIN_MODEM_RESET >= 0
+  Serial.println("Modem zurücksetzen");
   digitalWrite(PIN_MODEM_RESET, MODEM_RESET_LEVEL);
   delay(2600);
   digitalWrite(PIN_MODEM_RESET, !MODEM_RESET_LEVEL);
-  pulsePwrKey();
+#else
+  if (modemStatusOn()) {
+    Serial.println("Modem an, aber stumm: ausschalten");
+    pulsePwrKey(MODEM_POWEROFF_PULSE_MS);
+    for (int i = 0; i < 150 && modemStatusOn(); i++) delay(100);
+    delay(1000);
+  }
+#endif
+
+  Serial.println("Modem einschalten");
+  pulsePwrKey(MODEM_PWRKEY_PULSE_MS);
   if (modemResponds(30000)) return true;
 
-  // War es vorher an, hat der Puls es eben ausgeschaltet.
+  // Ohne Statuspin wissen wir nicht, ob es vorher an war und der Puls es
+  // eben ausgeschaltet hat.
   Serial.println("Keine Antwort, zweiter Einschaltversuch");
-  pulsePwrKey();
+  pulsePwrKey(MODEM_PWRKEY_PULSE_MS);
   return modemResponds(30000);
 }
 
 static void gnssEnable() {
-#if defined(MODEM_A7670)
-  Serial.printf("GNSS an: %s\n", modemCmdRaw("AT+CGNSSPWR=1", 5000).c_str());
+#if defined(BOARD_T_SIM7600)
+  // Die GNSS-Antenne hängt an AUXVDD des Modems, die muss erst an.
+  modemCmdRaw("AT+CVAUXV=2800", 2000);
+  modemCmdRaw("AT+CVAUXS=1", 2000);
+  Serial.printf("GNSS an: %s\n", modemCmdRaw("AT+CGPS=1", 5000).c_str());
 #else
-  Serial.printf("GNSS an: %s\n", modemCmdRaw("AT+CGPS=1,1", 5000).c_str());
+  Serial.printf("GNSS an: %s\n", modemCmdRaw("AT+CGNSSPWR=1", 5000).c_str());
 #endif
 }
 
@@ -196,6 +228,20 @@ static void startMobile() {
   }
 }
 
+// SIM7600: "+CBC: 4.123V", andere: "+CBC: 0,85,4123" (mV). 0 = unbekannt.
+static int modemSupplyMv() {
+  String r = PPP.cmd("AT+CBC", 2000);
+  int colon = r.indexOf(':');
+  if (colon < 0) return 0;
+  String v = r.substring(colon + 1);
+  int nl = v.indexOf('\n');
+  if (nl >= 0) v = v.substring(0, nl);
+  v.trim();
+  if (v.indexOf('V') >= 0) return (int)(v.toFloat() * 1000);
+  int comma = v.lastIndexOf(',');
+  return comma >= 0 ? v.substring(comma + 1).toInt() : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Home Assistant
 // ---------------------------------------------------------------------------
@@ -263,12 +309,12 @@ static bool reportToHomeAssistant() {
 // ---------------------------------------------------------------------------
 
 static String statusJson() {
-  char buf[640];
+  char buf[768];
   snprintf(buf, sizeof(buf),
            "{\"device\":\"%s\",\"uptime_s\":%lu,"
            "\"gps\":{\"fix\":%s,\"valid\":%s,\"latitude\":%.6f,\"longitude\":%.6f,\"altitude_m\":%.1f,"
            "\"speed_kmh\":%.1f,\"course\":%.0f,\"satellites\":%d,\"hdop\":%.1f,\"utc\":\"%s\"},"
-           "\"power\":{\"external\":%s,\"source\":\"%s\",\"sensed\":%s,\"battery_mv\":%d,\"battery_percent\":%d},"
+           "\"power\":{\"external\":%s,\"source\":\"%s\",\"sensed\":%s,\"battery_mv\":%d,\"battery_percent\":%d,\"charging\":%s},"
            "\"mobile\":{\"connected\":%s,\"ip\":\"%s\",\"rssi\":%d},"
            "\"hotspot\":{\"ssid\":\"%s\",\"clients\":%d},"
            "\"report\":{\"last_http_code\":%d,\"last_ok_s_ago\":%ld}}",
@@ -276,7 +322,7 @@ static String statusJson() {
            lastFix.valid ? "true" : "false", lastFix.lat, lastFix.lon, lastFix.altitude, lastFix.speedKmh,
            lastFix.course, lastFix.satellites, lastFix.hdop, lastFix.utc, power.externalPower ? "true" : "false",
            power.externalPower ? "netz" : "akku", power.sensed ? "true" : "false", power.batteryMv,
-           power.batteryPercent, PPP.connected() ? "true" : "false", PPP.localIP().toString().c_str(),
+           power.batteryPercent, power.charging ? "true" : "false", PPP.connected() ? "true" : "false", PPP.localIP().toString().c_str(),
            pppRssi, SECRET_AP_SSID, WiFi.AP.stationCount(), lastHttpCode,
            lastReportOkAt ? (long)((millis() - lastReportOkAt) / 1000) : -1L);
   return String(buf);
@@ -291,7 +337,7 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 async function upd(){try{const s=await (await fetch('/status')).json();const g=s.gps,p=s.power;
 const rows=[['Position',g.valid?`<a href="https://www.openstreetmap.org/?mlat=${g.latitude}&mlon=${g.longitude}#map=16/${g.latitude}/${g.longitude}">${g.latitude.toFixed(5)}, ${g.longitude.toFixed(5)}</a>`+(g.fix?'':' (letzte)'):'kein GPS-Fix'],
 ['Tempo',g.speed_kmh.toFixed(1)+' km/h'],['Satelliten',g.satellites],
-['Strom',(p.external?'Netz':'Akku')+(p.sensed?'':' (geschätzt)')],['Akku',p.battery_percent+' % ('+(p.battery_mv/1000).toFixed(2)+' V)'],
+['Strom',(p.external?'Netz':'Akku')+(p.sensed?'':' (geschätzt)')],['Akku',p.battery_percent+' % ('+(p.battery_mv/1000).toFixed(2)+' V)'+(p.charging?', lädt':'')],
 ['Mobilfunk',s.mobile.connected?'verbunden, RSSI '+s.mobile.rssi:'getrennt'],['Hotspot',s.hotspot.clients+' Gerät(e)'],
 ['Home Assistant',s.report.last_ok_s_ago<0?'noch nichts gemeldet':'vor '+s.report.last_ok_s_ago+' s, HTTP '+s.report.last_http_code]];
 document.getElementById('t').innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');}catch(e){}}
@@ -328,7 +374,7 @@ void setup() {
   gnssEnable();
   startMobile();
 
-  power = powerRead();
+  power = powerRead(modemSupplyMv());
   lastSeenExternalPower = power.externalPower;
   nextReportAt = millis();
 }
@@ -343,7 +389,7 @@ void loop() {
     gnssHasFix = gnssRead(fix);
     if (gnssHasFix) lastFix = fix;
     pppRssi = PPP.RSSI();
-    power = powerRead();
+    power = powerRead(modemSupplyMv());
   }
 
   // Wechsel zwischen Netz und Akku sofort melden.

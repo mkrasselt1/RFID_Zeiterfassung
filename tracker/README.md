@@ -17,9 +17,12 @@ Firmware für ein LilyGO-LTE-Board im Traktor. Sie macht drei Dinge gleichzeitig
    hinzufügen → GPSLogger*. Die angezeigte Webhook-URL notieren.
 2. `include/secrets.example.h` nach `include/secrets.h` kopieren und APN,
    SIM-PIN, Hotspot-Name/-Passwort und Webhook-URL eintragen.
-3. In `include/config.h` das Modem wählen (`MODEM_A7670` oder
-   `MODEM_SIM7600`) und die Pins mit dem eigenen Board abgleichen.
-4. Bauen und flashen:
+3. In `include/config.h` das Board wählen. Voreingestellt ist der
+   T-SIM7600E (`BOARD_T_SIM7600`), alternativ `BOARD_T_A7670`. Die Pins
+   stammen aus LilyGOs eigenen Beispielen.
+4. Auf dem T-SIM7600 die DIP-Schalter so stellen: P1 und P2 auf ON (Modem-UART
+   am ESP32), P4 auf OFF (ESP32 schaltet das Modem ein).
+5. Bauen und flashen:
 
    ```sh
    cd tracker
@@ -63,15 +66,22 @@ JSON.
 
 ## Netzbetrieb erkennen
 
-Das Board meldet nicht von sich aus, ob Strom von außen kommt. Ohne Zusatz
-schätzt die Firmware aus der Akkuspannung (über 4,18 V gilt als „lädt“) —
-das ist ungenau: Ein voller Akku ohne Netz sieht kurz genauso aus, ein
-leerer Akku am Netz lädt unter 4,18 V.
+**T-SIM7600:** Hier geht das ohne Zusatzteile. Sobald Strom über USB-C oder
+den VBUS-Pin kommt, trennt das Board den Spannungsteiler des Akkus an GPIO35,
+und der ADC liest 0. Daran erkennt die Firmware den Netzbetrieb. Die
+Akkuspannung kommt in dieser Zeit vom Modem (`AT+CBC`). Weil der Akku dabei
+lädt, liegt der Prozentwert zu hoch (`charging: true` in `/status`).
 
-Zuverlässig wird es mit zwei Widerständen: vom 5-V-Eingang (USB bzw. der
-Ausgang des 12-V-Wandlers) über 100 kΩ auf einen freien ADC1-Pin, z. B.
-GPIO34, und von dort 100 kΩ nach GND. Dann in `config.h`
-`PIN_POWER_SENSE` auf 34 setzen.
+Für den Traktor heißt das: Ein 12-V-auf-5-V-Wandler mit mindestens 2 A an
+USB-C oder VBUS. **VBUS verträgt höchstens 5 V.** Der Solar-Eingang taugt
+nicht als Versorgung, er lädt nur den Akku. Laut LilyGO kann das Board beim
+Umschalten zwischen Netz und Akku neu starten. Die Firmware meldet nach jedem
+Start sofort, der Wechsel kommt also trotzdem in Home Assistant an.
+
+**T-A7670 und andere:** Ohne Zusatz wird aus der Akkuspannung geschätzt
+(über 4,18 V gilt als „lädt“), und das ist ungenau. Zuverlässig wird es mit
+zwei Widerständen: vom 5-V-Eingang über 100 kΩ auf GPIO34, von dort 100 kΩ
+nach GND, und in `config.h` `PIN_POWER_SENSE` auf 34 setzen.
 
 ## Wie es funktioniert
 
@@ -91,10 +101,10 @@ Die Firmware baut, der GNSS-Parser ist gegen Beispielantworten von SIM7600
 und A7670 geprüft. Auf echter Hardware lief sie noch nicht. Am ehesten
 hakt es bei:
 
-- **Pins**: LilyGO hat mehrere Revisionen. Bei Schweigen des Modems zuerst
-  TX/RX in `config.h` tauschen.
-- **CMUX auf dem A7670**: Die Firmware nutzt den SIM7600-Treiber von
-  esp-modem. Bricht `CMUX nicht möglich` den Start ab, bitte das Log
-  schicken.
+- **Pins**: Sie stammen aus LilyGOs Beispielen. Bei Schweigen des Modems
+  zuerst die DIP-Schalter prüfen, dann TX/RX in `config.h` tauschen.
+- **CMUX**: Beim SIM7600 unterstützt esp-modem das offiziell, beim A7670
+  wird derselbe Treiber verwendet. Bricht `CMUX nicht möglich` den Start ab,
+  bitte das Log schicken.
 - **APN**: Einige Prepaid-Tarife brauchen Benutzername/Passwort; das kann die
   PPP-Bibliothek nicht.
