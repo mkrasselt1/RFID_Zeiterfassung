@@ -6,12 +6,15 @@ use App\Models\Absence;
 use App\Models\Cardholder;
 use App\Models\Employee;
 use App\Models\UserLog;
+use App\Services\CardAssignment;
 use App\Services\WorktimeService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 /**
@@ -19,6 +22,7 @@ use Illuminate\Validation\Rule;
  * gedacht für das Übernehmen der jahrelang von Hand korrigierten Stundenzettel.
  *
  *   GET    /api/v1/admin/employees
+ *   POST   /api/v1/admin/employees          {name, email?, is_active?, cards?: [uid]}
  *   GET    /api/v1/admin/stampings?from=Y-m-d&to=Y-m-d[&employee_id=]
  *   POST   /api/v1/admin/stampings          {employee_id, date, timein, timeout?, card_uid?}
  *   PATCH  /api/v1/admin/stampings/{id}     {date?, timein?, timeout?, employee_id?}
@@ -52,6 +56,60 @@ class AdminApiController extends Controller
             ]);
 
         return response()->json(['employees' => $employees]);
+    }
+
+    /**
+     * Mitarbeiter anlegen, z.B. ehemalige, deren Stempelungen noch keinem Konto
+     * gehören. Ohne E-Mail gibt es eine nicht zustellbare Platzhalter-Adresse,
+     * das Passwort ist zufällig — anmelden kann sich so niemand. Die Karten
+     * werden wie im Panel übernommen, samt ihrer noch freien Stempelungen.
+     */
+    public function storeEmployee(Request $request, CardAssignment $cards): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['nullable', 'email', 'unique:employees,email'],
+            'is_active' => ['sometimes', 'boolean'],
+            'cards' => ['sometimes', 'array'],
+            'cards.*' => ['string', 'max:30'],
+        ]);
+
+        $email = $data['email'] ?? Str::slug($data['name'], '.').'@ehemalig.invalid';
+        if (Employee::where('email', $email)->exists()) {
+            return response()->json(['error' => 'E-Mail bereits vergeben'], 409);
+        }
+
+        $employee = DB::transaction(function () use ($data, $email, $cards) {
+            $employee = Employee::create([
+                'name' => $data['name'],
+                'email' => $email,
+                'password' => Hash::make(Str::password(32)),
+                'role' => Employee::ROLE_EMPLOYEE,
+                'is_active' => $data['is_active'] ?? true,
+            ]);
+
+            foreach ($data['cards'] ?? [] as $uid) {
+                $cards->assign($employee, [
+                    'card_uid' => $uid,
+                    'username' => mb_substr($employee->name, 0, 30),
+                    'email' => mb_substr($employee->email, 0, 50),
+                    'user_date' => Carbon::now()->toDateString(),
+                ]);
+            }
+
+            return $employee;
+        });
+
+        $employee->load('cards');
+
+        return response()->json(['employee' => [
+            'id' => $employee->id,
+            'name' => $employee->name,
+            'email' => $employee->email,
+            'is_active' => $employee->is_active,
+            'cards' => $employee->cards->pluck('card_uid'),
+            'stampings' => UserLog::where('employee_id', $employee->id)->count(),
+        ]], 201);
     }
 
     public function stampings(Request $request): JsonResponse

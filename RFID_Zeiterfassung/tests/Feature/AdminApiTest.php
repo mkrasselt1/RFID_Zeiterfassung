@@ -238,4 +238,31 @@ class AdminApiTest extends TestCase
         $this->assertSame($this->admin->id, $absence->fresh()->approver_id);
         $this->assertNotNull(WorkDay::where('employee_id', $this->worker->id)->where('work_date', '2026-06-10')->value('absence_id'));
     }
+
+    public function test_creates_a_former_employee_and_claims_their_cards_history(): void
+    {
+        \App\Models\Cardholder::create([
+            'card_uid' => '47E34FD3', 'username' => 'Andreas Berger', 'user_date' => '2023-01-01',
+        ]);
+        UserLog::create([
+            'employee_id' => null, 'card_uid' => '47E34FD3',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2024-10-07',
+            'timein' => '08:00:00', 'timeout' => '16:30:00', 'card_out' => 1,
+        ]);
+
+        $this->asAdmin()->postJson('/api/v1/admin/employees', [
+            'name' => 'Andreas Berger', 'is_active' => false, 'cards' => ['47:e3:4f:d3'],
+        ])
+            ->assertCreated()
+            ->assertJsonPath('employee.email', 'andreas.berger@ehemalig.invalid')
+            ->assertJsonPath('employee.cards.0', '47E34FD3')
+            ->assertJsonPath('employee.stampings', 1);
+
+        $employee = Employee::where('name', 'Andreas Berger')->sole();
+        $this->assertFalse($employee->is_active);
+        $this->assertSame(1, \App\Models\Cardholder::where('card_uid', '47E34FD3')->count());
+        $this->assertTrue(WorkDay::where('employee_id', $employee->id)->where('work_date', '2024-10-07')->exists());
+
+        $this->asAdmin()->postJson('/api/v1/admin/employees', ['name' => 'Andreas Berger'])->assertStatus(409);
+    }
 }

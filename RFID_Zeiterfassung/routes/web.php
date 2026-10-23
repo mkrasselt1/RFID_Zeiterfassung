@@ -49,6 +49,7 @@ Route::prefix('api/v1/admin')
     ->middleware([\App\Http\Middleware\AdminApiAuth::class, 'throttle:600,1'])
     ->group(function () {
         Route::get('/employees', [AdminApiController::class, 'employees'])->name('api.admin.employees');
+        Route::post('/employees', [AdminApiController::class, 'storeEmployee'])->name('api.admin.employees.store');
         Route::get('/stampings', [AdminApiController::class, 'stampings'])->name('api.admin.stampings');
         Route::post('/stampings', [AdminApiController::class, 'storeStamping'])->name('api.admin.stampings.store');
         Route::patch('/stampings/{log}', [AdminApiController::class, 'updateStamping'])->name('api.admin.stampings.update');
