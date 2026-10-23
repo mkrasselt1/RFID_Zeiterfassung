@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Device;
 use App\Models\DeviceEvent;
+use App\Models\UserLog;
 use App\Services\DeviceStamping;
+use App\Services\WorktimeService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,9 +33,14 @@ use Illuminate\Validation\ValidationException;
  *     "server_time": "2026-10-01T07:05:00+02:00",
  *     "results": [
  *       {"uid": "a1b2-17", "status": "checkin", "name": "Max Mustermann", "message": "",
- *        "duplicate": false}
+ *        "duplicate": false, "time": "07:03", "worked_minutes": 0, "expected_minutes": 480}
  *     ]
  *   }
+ *
+ * `time`, `worked_minutes` und `expected_minutes` gibt es nur bei `checkin` und
+ * `checkout`: die gebuchte Uhrzeit und die Netto-Arbeitszeit dieses Tages
+ * (Pause abgezogen, eine laufende Anwesenheit bis jetzt gezählt) neben dem
+ * Soll. Damit zeigt der Leser beim Stempeln, wo man heute steht.
  *
  * Drei Dinge unterscheiden sie von der alten Schnittstelle:
  *
@@ -54,8 +61,10 @@ class DeviceStampingController extends Controller
     /** Beyond this a device clock is considered broken, not merely offline. */
     private const MAX_FUTURE_MINUTES = 5;
 
-    public function __construct(private readonly DeviceStamping $stamping)
-    {
+    public function __construct(
+        private readonly DeviceStamping $stamping,
+        private readonly WorktimeService $worktime,
+    ) {
     }
 
     public function store(Request $request): JsonResponse
@@ -110,12 +119,13 @@ class DeviceStampingController extends Controller
             ->first();
 
         if ($existing !== null) {
-            return $this->answer($existing->event_uid, $existing->status, '', $existing->message ?? '', true);
+            return $this->answer($existing->event_uid, $existing->status, '', $existing->message ?? '', true)
+                + $this->daySummary($existing->status, $existing->user_log_id);
         }
 
         $at = $this->occurredAt($event['at'] ?? null);
 
-        return DB::transaction(function () use ($device, $event, $at) {
+        $answer = DB::transaction(function () use ($device, $event, $at) {
             // Unverändert übernehmen, wie die alte Schnittstelle auch: Karten
             // werden im Anlernmodus über denselben Weg angelegt, also in der
             // Schreibweise, die die Firmware schickt. Hier zu normalisieren
@@ -133,8 +143,42 @@ class DeviceStampingController extends Controller
                 'user_log_id' => $result->userLogId,
             ]);
 
-            return $this->answer($event['uid'], $result->status, $result->name, $result->message, false);
+            return $this->answer($event['uid'], $result->status, $result->name, $result->message, false)
+                + ['user_log_id' => $result->userLogId];
         });
+
+        // Erst nach dem Commit rechnen: die Summe soll die eben gebuchte
+        // Stempelung enthalten, und eine Rechnung hält keine Sperren offen.
+        $userLogId = $answer['user_log_id'];
+        unset($answer['user_log_id']);
+
+        return $answer + $this->daySummary($answer['status'], $userLogId);
+    }
+
+    /**
+     * Uhrzeit der Stempelung und Stand des Tages, für die Anzeige am Leser.
+     *
+     * @return array{time?:string, worked_minutes?:int, expected_minutes?:int}
+     */
+    private function daySummary(string $status, ?int $userLogId): array
+    {
+        if (! in_array($status, [DeviceStamping::CHECKIN, DeviceStamping::CHECKOUT], true) || $userLogId === null) {
+            return [];
+        }
+
+        $log = UserLog::with('employee')->find($userLogId);
+        if ($log === null || $log->employee === null) {
+            return [];
+        }
+
+        $day = Carbon::parse($log->checkindate);
+        $time = $status === DeviceStamping::CHECKOUT ? $log->timeout : $log->timein;
+
+        return [
+            'time' => substr((string) $time, 0, 5),
+            'worked_minutes' => $this->worktime->workedMinutes($log->employee, $day),
+            'expected_minutes' => $this->worktime->expectedMinutes($log->employee, $day),
+        ];
     }
 
     /**
@@ -166,11 +210,6 @@ class DeviceStampingController extends Controller
 
     private function authenticate(Request $request): ?Device
     {
-        $token = $request->bearerToken();
-        if ($token === null || ! preg_match('/\A[[:xdigit:]]{16}\z/', $token)) {
-            return null;
-        }
-
-        return Device::where('device_uid', $token)->first();
+        return Device::fromBearer($request->bearerToken());
     }
 }

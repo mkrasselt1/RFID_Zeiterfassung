@@ -35,6 +35,16 @@ class Device extends Model
         return isset(self::AUTH_MODES[$mode]) ? $mode : self::AUTH_DEFAULT;
     }
 
+    /** The reader behind a bearer token, or null for a missing or malformed one. */
+    public static function fromBearer(?string $token): ?self
+    {
+        if ($token === null || ! preg_match('/\A[[:xdigit:]]{16}\z/', $token)) {
+            return null;
+        }
+
+        return self::where('device_uid', $token)->first();
+    }
+
     protected $table = 'devices';
 
     public $timestamps = false;
@@ -87,7 +97,12 @@ class Device extends Model
             return null;
         }
 
-        return 'http://'.(str_contains($ip, ':') ? '['.$ip.']' : $ip).'/';
+        // Ab Firmware 2.5 liegt unter / eine offene Statusseite und die
+        // Konfiguration unter /config; ältere Leser haben sie unter / und
+        // kennen /config nicht.
+        $path = version_compare((string) $this->firmware_version, '2.5', '>=') ? 'config' : '';
+
+        return 'http://'.(str_contains($ip, ':') ? '['.$ip.']' : $ip).'/'.$path;
     }
 
     public function events()
@@ -99,5 +114,7 @@ class Device extends Model
         'device_date' => 'date',
         'device_mode' => 'integer',
         'last_seen_at' => 'datetime',
+        'status_report' => 'array',
+        'status_reported_at' => 'datetime',
     ];
 }

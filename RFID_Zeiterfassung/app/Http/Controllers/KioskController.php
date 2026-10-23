@@ -121,11 +121,6 @@ class KioskController extends Controller
 
     private function authenticate(Request $request): ?Device
     {
-        $token = $request->bearerToken();
-        if ($token === null || ! preg_match('/\A[[:xdigit:]]{16}\z/', $token)) {
-            return null;
-        }
-
-        return Device::where('device_uid', $token)->first();
+        return Device::fromBearer($request->bearerToken());
     }
 }

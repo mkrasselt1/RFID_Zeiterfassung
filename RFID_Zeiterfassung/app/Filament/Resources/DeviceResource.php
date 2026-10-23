@@ -92,6 +92,16 @@ class DeviceResource extends Resource
                     ->color(fn (?int $state) => (int) $state > 0 ? 'warning' : 'gray'),
                 Tables\Columns\TextColumn::make('firmware_version')->label('Firmware')
                     ->placeholder('–')->toggleable(isToggledHiddenByDefault: true),
+                // Vom Leser selbst gemeldet (POST /api/v1/device/status).
+                Tables\Columns\TextColumn::make('wifi')->label('WLAN')
+                    ->state(fn (Device $r) => isset($r->status_report['rssi']) ? $r->status_report['rssi'].' dBm' : null)
+                    ->description(fn (Device $r) => $r->status_report['ssid'] ?? null)
+                    ->color(fn (Device $r) => ($r->status_report['rssi'] ?? 0) < -80 ? 'warning' : null)
+                    ->placeholder('–')->toggleable(),
+                Tables\Columns\TextColumn::make('reader')->label('Kartenleser')
+                    ->state(fn (Device $r) => $r->status_report['reader'] ?? null)
+                    ->color(fn (?string $state) => $state === 'kein Leser' ? 'danger' : null)
+                    ->placeholder('–')->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('local_ip')->label('Adresse')
                     ->placeholder('–')->fontFamily('mono')
                     ->toggleable(isToggledHiddenByDefault: true),

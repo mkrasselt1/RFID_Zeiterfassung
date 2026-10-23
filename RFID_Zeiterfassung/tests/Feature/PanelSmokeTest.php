@@ -110,6 +110,64 @@ class PanelSmokeTest extends TestCase
         ];
     }
 
+    /** The reader fetches what the panel decides: mode, time zone as POSIX rule, intervals. */
+    public function test_device_fetches_its_configuration(): void
+    {
+        $this->seed();
+        Setting::put('timezone', 'Europe/Berlin');
+
+        $this->withHeader('Authorization', 'Bearer a1b2c3d4e5f60718')
+            ->getJson('/api/v1/device/config')
+            ->assertStatus(200)
+            ->assertJsonPath('tz', 'CET-1CEST,M3.5.0,M10.5.0/3')
+            ->assertJsonPath('timezone', 'Europe/Berlin')
+            ->assertJsonStructure(['name', 'mode', 'ntp_server', 'server_time', 'intervals' => ['status', 'config', 'flush']]);
+
+        $this->flushHeaders()->getJson('/api/v1/device/config')->assertStatus(401);
+        $this->withHeader('Authorization', 'Bearer 0123456789abcdef')
+            ->getJson('/api/v1/device/config')->assertStatus(401);
+    }
+
+    /** What a reader reports about itself lands on the device, the LAN address included. */
+    public function test_device_reports_its_status(): void
+    {
+        $this->seed();
+
+        $this->withHeader('Authorization', 'Bearer a1b2c3d4e5f60718')
+            ->postJson('/api/v1/device/status', [
+                'firmware' => '2.5', 'pending' => 3, 'ip' => '192.168.16.82',
+                'uptime' => 3600, 'rssi' => -61, 'ssid' => 'Buero', 'free_heap' => 180000,
+                'reader' => 'PN532 v1.6', 'reset_reason' => 'poweron', 'bogus' => 'weg damit',
+            ])
+            ->assertStatus(200)->assertJsonStructure(['server_time']);
+
+        $device = Device::where('device_uid', 'a1b2c3d4e5f60718')->first();
+        $this->assertSame('2.5', $device->firmware_version);
+        $this->assertSame(3, (int) $device->pending_count);
+        $this->assertSame('192.168.16.82', $device->local_ip);
+        $this->assertSame(-61, $device->status_report['rssi']);
+        $this->assertSame('PN532 v1.6', $device->status_report['reader']);
+        $this->assertArrayNotHasKey('bogus', $device->status_report);
+        $this->assertNotNull($device->last_seen_at);
+
+        $this->withHeader('Authorization', 'Bearer a1b2c3d4e5f60718')
+            ->postJson('/api/v1/device/status', ['rssi' => 20])->assertStatus(422);
+    }
+
+    /** Stamping and backfilling under the device prefix, same as the old path. */
+    public function test_device_stampings_live_under_the_device_prefix(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 09:00:00'));
+
+        $this->withHeader('Authorization', 'Bearer a1b2c3d4e5f60718')
+            ->postJson('/api/v1/device/stampings', ['events' => [
+                ['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:03:12+02:00'],
+            ]])
+            ->assertStatus(200)->assertJsonPath('results.0.status', 'checkin')
+            ->assertJsonPath('results.0.time', '07:03');
+    }
+
     /** A malformed bearer token is rejected like a malformed query one. */
     public function test_device_api_rejects_a_malformed_bearer_token(): void
     {
@@ -142,6 +200,39 @@ class PanelSmokeTest extends TestCase
 
         $log = \App\Models\UserLog::where('card_uid', 'deadbeef')->latest('id')->first();
         $this->assertSame('07:03:12', substr((string) $log->timein, 0, 8), 'die Zeit vom Gerät, nicht 09:00');
+    }
+
+    /** The reader shows the booked time and where the day stands — net, against the target. */
+    public function test_stamping_answer_carries_time_and_worked_minutes_of_the_day(): void
+    {
+        $this->seed();
+        $this->travelTo(Carbon::parse('2026-10-01 18:00:00'));
+
+        $r = $this->postStampings([
+            ['uid' => 'dev-1', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T07:00:00+02:00'],
+            ['uid' => 'dev-2', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T16:30:00+02:00'],
+        ]);
+
+        $log = \App\Models\UserLog::where('card_uid', 'deadbeef')->latest('id')->first();
+        $worktime = app(\App\Services\WorktimeService::class);
+        $day = Carbon::parse('2026-10-01');
+
+        $r->assertStatus(200)
+            ->assertJsonPath('results.0.time', '07:00')
+            ->assertJsonPath('results.1.status', 'checkout')
+            ->assertJsonPath('results.1.time', '16:30')
+            ->assertJsonPath('results.1.worked_minutes', $worktime->workedMinutes($log->employee, $day))
+            ->assertJsonPath('results.1.expected_minutes', $worktime->expectedMinutes($log->employee, $day));
+        $this->assertGreaterThan(0, $r->json('results.1.worked_minutes'));
+
+        // Nochmals geliefert: dieselbe Auskunft, nichts doppelt gebucht.
+        $this->postStampings([['uid' => 'dev-2', 'card_uid' => 'deadbeef', 'at' => '2026-10-01T16:30:00+02:00']])
+            ->assertJsonPath('results.0.duplicate', true)
+            ->assertJsonPath('results.0.time', '16:30');
+
+        // Eine abgelehnte Karte bekommt keine Tageswerte.
+        $this->postStampings([['uid' => 'dev-3', 'card_uid' => '0badc0de', 'at' => '2026-10-01T16:31:00+02:00']])
+            ->assertJsonMissingPath('results.0.worked_minutes');
     }
 
     /** Several at once, in order — a reader empties its buffer in one go. */
@@ -274,13 +365,14 @@ class PanelSmokeTest extends TestCase
     /**
      * @dataProvider configUrlCases
      */
-    public function test_reader_config_url(?string $ip, ?string $expected): void
+    public function test_reader_config_url(?string $ip, ?string $expected, ?string $firmware = null): void
     {
         $device = \App\Models\Device::create([
             'device_name' => 'Tor', 'device_dep' => 'All', 'device_uid' => '00112233445566bb',
             'device_date' => '2026-01-01', 'device_mode' => \App\Models\Device::MODE_TIME,
             'local_ip' => $ip,
         ]);
+        $device->forceFill(['firmware_version' => $firmware])->save();
 
         $this->assertSame($expected, $device->configUrl());
     }
@@ -290,6 +382,9 @@ class PanelSmokeTest extends TestCase
         return [
             'IPv4' => ['192.168.1.50', 'http://192.168.1.50/'],
             'IPv6 wird geklammert' => ['fd00::1', 'http://[fd00::1]/'],
+            // Ab 2.5 ist / die offene Statusseite, konfiguriert wird unter /config.
+            'Firmware 2.5' => ['192.168.1.50', 'http://192.168.1.50/config', '2.5'],
+            'Firmware 2.4' => ['192.168.1.50', 'http://192.168.1.50/', '2.4'],
             'leer' => [null, null],
             'Leerzeichen' => ['   ', null],
             // Sonst stünde im href, was jemand ins Feld getippt hat.

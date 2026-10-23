@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AdminApiController;
 use App\Http\Controllers\DeviceApiController;
+use App\Http\Controllers\DeviceController;
 use App\Http\Controllers\DeviceStampingController;
 use App\Http\Controllers\GoogleOAuthController;
 use App\Http\Controllers\KioskController;
@@ -31,6 +32,17 @@ Route::get('/getdata', [DeviceApiController::class, 'handle']);
 Route::post('/api/v1/stampings', [DeviceStampingController::class, 'store'])
     ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class])
     ->name('api.stampings');
+
+// Die Geräte-API des Lesers: Konfiguration holen, Zustand melden, stempeln und
+// Gepuffertes nachtragen. Ersetzt /getdata.php; der Pfad oben bleibt als
+// Alias für Firmware, die schon gepuffert, aber noch nicht hierher spricht.
+Route::prefix('api/v1/device')
+    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class])
+    ->group(function () {
+        Route::get('/config', [DeviceController::class, 'config'])->name('api.device.config');
+        Route::post('/status', [DeviceController::class, 'status'])->name('api.device.status');
+        Route::post('/stampings', [DeviceStampingController::class, 'store'])->name('api.device.stampings');
+    });
 
 // Stempeln ohne Karte: Namen am Drehrad wählen, PIN eingeben. Eigener Pfad,
 // weil hier anders geprüft wird — und weil die PIN nur online geht, während
