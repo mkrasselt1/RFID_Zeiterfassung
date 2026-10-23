@@ -73,7 +73,11 @@ class UserLogResource extends Resource
                 // die Namensliste belegt weniger als eine mit Chip.
                 Tables\Columns\TextColumn::make('source')->label('Erfasst über')->badge()
                     ->formatStateUsing(fn (?string $state) => \App\Models\UserLog::SOURCES[$state] ?? 'Karte')
-                    ->color(fn (?string $state) => $state === \App\Models\UserLog::SOURCE_KIOSK ? 'warning' : 'gray'),
+                    ->color(fn (?string $state) => match ($state) {
+                        \App\Models\UserLog::SOURCE_KIOSK => 'warning',
+                        \App\Models\UserLog::SOURCE_CORRECTION => 'info',
+                        default => 'gray',
+                    }),
                 Tables\Columns\TextColumn::make('device_dep')->label('Abteilung')->searchable(),
                 Tables\Columns\TextColumn::make('checkindate')->label('Datum')->date('d.m.Y')->sortable(),
                 Tables\Columns\TextColumn::make('timein')->label('Rein')

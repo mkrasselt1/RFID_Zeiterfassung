@@ -79,7 +79,8 @@ class CheckInOut extends Page
             );
         }
 
-        UserLog::create([
+        // Normales Stempeln, kein Eingriff — nicht ins Änderungsprotokoll.
+        UserLog::withoutEvents(fn () => UserLog::create([
             'employee_id' => $user->employee_id,
             'card_uid' => $user->card_uid,
             'device_uid' => 'Web',
@@ -88,7 +89,7 @@ class CheckInOut extends Page
             'timein' => Carbon::now()->format('H:i:s'),
             'timeout' => 0,
             'calendarEventId' => $eventId,
-        ]);
+        ]));
         $cAPI->persist();
 
         Notification::make()->title('Eingecheckt')->success()->send();
@@ -120,7 +121,7 @@ class CheckInOut extends Page
 
         $log->timeout = Carbon::now()->format('H:i:s');
         $log->card_out = 1;
-        $log->save();
+        UserLog::withoutEvents(fn () => $log->save());
         $cAPI->persist();
 
         Notification::make()->title('Ausgecheckt')->success()->send();

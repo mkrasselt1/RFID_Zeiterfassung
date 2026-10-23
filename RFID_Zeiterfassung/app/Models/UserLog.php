@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Observers\UserLogObserver;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -14,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * from the linked employee (the former denormalized `username` / `serialnumber`
  * snapshots were dropped).
  */
+#[ObservedBy(UserLogObserver::class)]
 class UserLog extends Model
 {
     protected $table = 'users_logs';
@@ -38,9 +41,13 @@ class UserLog extends Model
 
     public const SOURCE_KIOSK = 'kiosk';
 
+    /** Nachträglich über die Admin-API eingetragen, z.B. aus alten Stundenzetteln. */
+    public const SOURCE_CORRECTION = 'correction';
+
     public const SOURCES = [
         self::SOURCE_CARD => 'Karte',
         self::SOURCE_KIOSK => 'Namensliste',
+        self::SOURCE_CORRECTION => 'Korrektur',
     ];
 
     // checkindate is intentionally left uncast: it is stored and compared as a
