@@ -204,4 +204,23 @@ class AdminApiTest extends TestCase
         $this->assertSame(['timein' => '07:45:00'], $change->after);
         $this->actingAs($this->admin)->get('/admin/user-log-changes')->assertSuccessful();
     }
+
+    public function test_reassigns_a_stamping_made_with_someone_elses_card(): void
+    {
+        $other = $this->makeEmployee(Employee::ROLE_EMPLOYEE, 'other@example.de');
+        $log = UserLog::create([
+            'employee_id' => $other->id, 'card_uid' => 'FFFF0000',
+            'device_uid' => 'x', 'device_dep' => 'Buero', 'checkindate' => '2026-06-08',
+            'timein' => '08:00:00', 'timeout' => '16:30:00', 'card_out' => 1,
+        ]);
+
+        $this->asAdmin()
+            ->patchJson("/api/v1/admin/stampings/{$log->id}", ['employee_id' => $this->worker->id])
+            ->assertOk()
+            ->assertJsonPath('stamping.employee_id', $this->worker->id);
+
+        $day = WorkDay::where('employee_id', $this->worker->id)->where('work_date', '2026-06-08')->first();
+        $this->assertSame(480, $day->worked_minutes);
+        $this->assertSame(['employee_id' => $this->worker->id], UserLogChange::sole()->after);
+    }
 }

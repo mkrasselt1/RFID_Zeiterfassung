@@ -21,7 +21,7 @@ use Illuminate\Validation\Rule;
  *   GET    /api/v1/admin/employees
  *   GET    /api/v1/admin/stampings?from=Y-m-d&to=Y-m-d[&employee_id=]
  *   POST   /api/v1/admin/stampings          {employee_id, date, timein, timeout?, card_uid?}
- *   PATCH  /api/v1/admin/stampings/{id}     {date?, timein?, timeout?}
+ *   PATCH  /api/v1/admin/stampings/{id}     {date?, timein?, timeout?, employee_id?}
  *   DELETE /api/v1/admin/stampings/{id}
  *   GET    /api/v1/admin/absences?from=&to=[&employee_id=]
  *   POST   /api/v1/admin/absences           {employee_id, type, start_date, end_date, half_day?, reason?}
@@ -110,10 +110,15 @@ class AdminApiController extends Controller
             'date' => ['sometimes', 'date_format:Y-m-d'],
             'timein' => ['sometimes', 'date_format:H:i:s'],
             'timeout' => ['sometimes', 'nullable', 'date_format:H:i:s'],
+            // Umhängen, wenn jemand mit fremder Karte gestempelt hat.
+            'employee_id' => ['sometimes', 'integer', 'exists:employees,id'],
         ]);
 
         $before = clone $log;
 
+        if (array_key_exists('employee_id', $data)) {
+            $log->employee_id = $data['employee_id'];
+        }
         if (array_key_exists('date', $data)) {
             $log->checkindate = $data['date'];
         }
@@ -125,14 +130,16 @@ class AdminApiController extends Controller
             $log->card_out = $data['timeout'] !== null;
         }
 
-        if ($log->card_out && $log->timeout <= $log->timein) {
+        $timesChanged = array_intersect_key($data, array_flip(['timein', 'timeout'])) !== [];
+        if ($timesChanged && $log->card_out && $log->timeout <= $log->timein) {
             return response()->json(['error' => 'Gehen muss nach Kommen liegen'], 422);
         }
 
         $log->save();
 
         $this->worktime->recalculateForLog($log);
-        if (substr((string) $before->checkindate, 0, 10) !== substr((string) $log->checkindate, 0, 10)) {
+        if ($before->employee_id !== $log->employee_id
+            || substr((string) $before->checkindate, 0, 10) !== substr((string) $log->checkindate, 0, 10)) {
             $this->worktime->recalculateForLog($before);
         }
 
