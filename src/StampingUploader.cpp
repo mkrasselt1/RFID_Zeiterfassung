@@ -4,35 +4,9 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 
+#include "DeviceApi.h"
+
 StampingUploader stampingUploader;
-
-void StampingUploader::configure(const char *baseUrl, const char *token, const char *firmware)
-{
-    this->baseUrl = String(baseUrl);
-    this->token = String(token);
-    this->firmware = String(firmware);
-}
-
-String StampingUploader::endpoint() const
-{
-    String url = baseUrl;
-
-    // Konfiguriert ist die alte Adresse (…/getdata.php oder …/getdata). Daraus
-    // die neue abzuleiten erspart es, bei jedem Gerät die Einstellung
-    // anzufassen — die Firmware wird ohnehin getauscht, die Konfiguration im
-    // Flash bleibt.
-    int cut = url.lastIndexOf("/getdata");
-    if (cut >= 0)
-    {
-        url = url.substring(0, cut);
-    }
-    while (url.endsWith("/"))
-    {
-        url.remove(url.length() - 1);
-    }
-
-    return url + "/api/v1/stampings";
-}
 
 UploadOutcome StampingUploader::flush(const String &uidOfInterest)
 {
@@ -58,7 +32,7 @@ UploadOutcome StampingUploader::flush(const String &uidOfInterest)
     // Heap, nicht Stack: zwei Dokumente zu je 4 KB passen nicht in den Stack
     // der Arduino-Task und würden ihn zur Laufzeit überschreiben.
     DynamicJsonDocument doc(4096);
-    doc["firmware"] = firmware;
+    doc["firmware"] = deviceApi.firmwareVersion();
     // Was nach diesem Schwung noch liegen bleibt — im Panel sichtbar.
     size_t total = stampingBuffer.count();
     doc["pending"] = total > n ? (total - n) : 0;
@@ -99,20 +73,25 @@ UploadOutcome StampingUploader::flush(const String &uidOfInterest)
     String body;
     serializeJson(doc, body);
 
-    HTTPClient http;
-    http.begin(endpoint());
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("Authorization", "Bearer " + token);
-    http.setTimeout(10000);
+    int code = 0;
+    String payload;
+    // Höchstens zweimal: neuer Pfad, und bei 404 einmal der ältere.
+    for (int attempt = 0; attempt < 2; attempt++)
+    {
+        code = deviceApi.request("POST", deviceApi.stampingsUrl(), body, payload);
 
-    int code = http.POST(body);
-    String payload = http.getString();
-    http.end();
+        if (code != 404 || deviceApi.usesLegacyStampings())
+        {
+            break;
+        }
+        deviceApi.useLegacyStampings();
+    }
 
     if (code != 200)
     {
         outcome.lastMessage = (code > 0) ? ("Server " + String(code)) : "Uebertragungsfehler";
-        Serial.printf("Upload fehlgeschlagen: %d %s\n", code, payload.c_str());
+        Serial.printf("Upload fehlgeschlagen: %d %s\n", code,
+                      payload.substring(0, min<size_t>(payload.length(), 120)).c_str());
         return outcome;
     }
 
@@ -130,6 +109,9 @@ UploadOutcome StampingUploader::flush(const String &uidOfInterest)
             outcome.lastStatus = result["status"].as<String>();
             outcome.lastName = result["name"].as<String>();
             outcome.lastMessage = result["message"].as<String>();
+            outcome.lastTime = result["time"] | "";
+            outcome.lastWorkedMinutes = result["worked_minutes"] | -1;
+            outcome.lastExpectedMinutes = result["expected_minutes"] | -1;
         }
     }
 

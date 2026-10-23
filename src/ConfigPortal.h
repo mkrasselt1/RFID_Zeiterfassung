@@ -2,13 +2,21 @@
 
 #include <Arduino.h>
 #include <WebServer.h>
+#include <vector>
 
 /**
  * Konfiguration im Betrieb, ohne das Gerät von der Wand zu nehmen.
  *
- * Erreichbar unter `http://<geraete-ip>/`, angemeldet wird sich mit dem Token
- * des Lesers als Passwort — demselben, das im Panel neben dem Gerät steht. Aus
- * der Leserverwaltung führt ein Link direkt hierher.
+ *   http://<geraete-ip>/         Statusseite, ohne Anmeldung
+ *   http://<geraete-ip>/status   dasselbe als JSON, ohne Anmeldung
+ *   http://<geraete-ip>/config   Konfiguration, Benutzer "admin", Passwort ist
+ *                                das Token des Lesers — dasselbe, das im Panel
+ *                                neben dem Gerät steht. Aus der
+ *                                Leserverwaltung führt ein Link direkt hierher.
+ *
+ * Die Statusseite ist offen, damit jeder vor Ort nachsehen kann, ob der Leser
+ * arbeitet. Auf ihr steht deshalb nichts, was schützenswert ist: kein Token,
+ * keine Namen.
  *
  * Warum nicht das Portal von WiFiManager: dessen Konfigurationsseite kennt
  * keine Anmeldung (die Bibliothek hat die Stelle auskommentiert und per
@@ -37,20 +45,32 @@ public:
         size_t deviceTokenLen;
     };
 
-    void begin(const Fields &fields, void (*onSave)());
+    /** Eine Zeile der Statusseite: Schlüssel fürs JSON, Beschriftung, Wert. */
+    struct StatusLine
+    {
+        const char *key;
+        const char *label;
+        String value;
+    };
+    using StatusLines = std::vector<StatusLine>;
+
+    /** `status` füllt die Statusseite; der Zustand liegt in main.cpp. */
+    void begin(const Fields &fields, void (*onSave)(), void (*status)(StatusLines &));
 
     /** In loop() aufrufen; blockiert nicht. */
     void handle();
 
 private:
     bool authenticated();
-    void handleRoot();
+    void handleOverview();
+    void handleConfig();
     void handleSave();
     void handleStatus();
 
     WebServer server{80};
     Fields fields{};
     void (*onSave)() = nullptr;
+    void (*status)(StatusLines &) = nullptr;
     bool started = false;
 };
 

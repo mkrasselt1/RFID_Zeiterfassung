@@ -7,7 +7,7 @@
 /**
  * Liefert gepufferte Stempelungen an den Server.
  *
- * Gesendet wird an `POST <server>/api/v1/stampings` mit dem Gerätetoken im
+ * Gesendet wird an `POST <server>/api/v1/device/stampings` mit dem Gerätetoken im
  * Authorization-Header — nicht mehr in der Adresszeile, wo es in jedem
  * Server- und Proxy-Protokoll landet.
  *
@@ -24,6 +24,10 @@ struct UploadOutcome
     String lastStatus;
     String lastName;
     String lastMessage;
+    /** Gebuchte Uhrzeit ("07:03") und Stand des Tages, wenn der Server sie kennt. */
+    String lastTime;
+    int lastWorkedMinutes = -1;
+    int lastExpectedMinutes = -1;
 };
 
 class StampingUploader
@@ -32,22 +36,12 @@ public:
     /** So viele je Anlauf; mehr sprengt den Speicher beim Zusammenbauen. */
     static const size_t BATCH_SIZE = 20;
 
-    void configure(const char *baseUrl, const char *token, const char *firmware);
-
     /**
      * Einen Schwung hochladen. `uidOfInterest` ist die gerade gestempelte
      * Karte — deren Ergebnis landet in `lastStatus`, damit das Display etwas
      * Sinnvolles zeigen kann.
      */
     UploadOutcome flush(const String &uidOfInterest = "");
-
-private:
-    /** Aus der alten Adresse (…/getdata.php) die neue ableiten. */
-    String endpoint() const;
-
-    String baseUrl;
-    String token;
-    String firmware;
 };
 
 extern StampingUploader stampingUploader;

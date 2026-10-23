@@ -15,30 +15,21 @@
 #include <time.h>
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
-#include <wifiManager.h>
+#include <WiFiManager.h>
 #include <WiFiClientSecure.h>
 // RFID-----------------------------
 #include <SPI.h>
-#include <MFRC522.h>
+#include "CardReader.h"
 #include "Timer.h"
-// OLED-----------------------------
-#include <Wire.h>
+// Anzeige--------------------------
 #include <icons.h>
+#include "Screen.h"
 #include "StampingBuffer.h"
 
 #include "StampingUploader.h"
 #include "ConfigPortal.h"
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include "DeviceApi.h"
 //************************************************************************
-// Declaration for SSD1306 display connected using software I2C pins are(22 SCL, 21 SDA)
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 64 // OLED display height, in pixels
-#define OLED_RESET 0     // Reset pin # (or -1 if sharing Arduino reset pin)
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-//************************************************************************
-SPIClass spi(HSPI);
-MFRC522 mfrc522(5, 15); // Create MFRC522 instance.
 Timer readerTimer;
 uint16_t TimerEventCardRead = 0;
 uint16_t TimerEventCardClear = 0;
@@ -50,9 +41,9 @@ String OldCardID;
 
 //************************************************************************
 // configurable things
-int timezone = 2;
-int time_dst = 0;
-
+// Ab Werk steht ein Platzhalter im Gerät. Solange er gilt, ist der Leser nicht
+// eingerichtet — das Display sagt es, und es zeigt, womit man sich anmeldet.
+const char *PLACEHOLDER_TOKEN = "0123456789ABCDEF";
 char device_token[17] = "0123456789ABCDEF";
 char backend_server[100] = "https://server.example/getdata.php";
 char time_server[30] = "pool.ntp.org";
@@ -71,8 +62,25 @@ WiFiManager wifiManager;
 // Zeitpunkt des letzten Upload-Versuchs und der letzten WLAN-Prüfung.
 unsigned long lastFlushAttempt = 0;
 unsigned long lastWifiCheck = 0;
-const unsigned long FLUSH_INTERVAL_MS = 30000;
+unsigned long lastStatusReport = 0;
+unsigned long lastConfigFetch = 0;
 const unsigned long WIFI_RETRY_MS = 15000;
+
+// Vom Server vorgegeben (GET /api/v1/device/config); bis zum ersten Abruf
+// gelten die Vorgaben aus DeviceApi.h und die zuletzt gespeicherte Zeitzone.
+RemoteConfig remoteConfig;
+DeviceCounters counters;
+
+// Wie oft im Ruhezustand nachgesehen wird, ob der Kartenleser noch antwortet.
+unsigned long lastReaderCheck = 0;
+const unsigned long READER_CHECK_MS = 10000;
+
+// Eine aufgelegte Karte wird bei jedem Abfragen wieder gelesen. Gestempelt
+// wird nur, wenn sie neu auftaucht — nicht alle paar Sekunden, solange sie
+// liegen bleibt.
+String heldCardUid;
+unsigned long heldCardSeenMs = 0;
+const unsigned long CARD_GONE_MS = 2500;
 
 
 enum CardStates
@@ -90,6 +98,8 @@ enum CardStates
   CARD_ERROR
 };
 String Card_Message = "";
+// Zweite Zeile nach dem Stempeln: Uhrzeit und Arbeitszeit des Tages.
+String Card_Detail = "";
 String newRfidId = "";
 long display_timeout = 0;
 CardStates CardResult = IDLE;
@@ -99,6 +109,33 @@ CardStates CardResult = IDLE;
 void resetLastCard();
 void SendCardID();
 void checkNewCard();
+
+static String hoursMinutes(int minutes)
+{
+  char text[8];
+  snprintf(text, sizeof(text), "%d:%02d", minutes / 60, minutes % 60);
+  return text;
+}
+
+/** "07:03  6:12/8:00" — gebuchte Uhrzeit, heute gearbeitet, Soll. */
+static String dayDetail(const UploadOutcome &outcome)
+{
+  String detail = outcome.lastTime;
+  if (outcome.lastWorkedMinutes >= 0)
+  {
+    if (detail.length())
+    {
+      detail += "  ";
+    }
+    detail += hoursMinutes(outcome.lastWorkedMinutes);
+    if (outcome.lastExpectedMinutes > 0)
+    {
+      detail += "/" + hoursMinutes(outcome.lastExpectedMinutes);
+    }
+  }
+  return detail;
+}
+
 void SendCardID()
 {
   TimerEventCardClear = readerTimer.every(2000, resetLastCard);
@@ -112,6 +149,8 @@ void SendCardID()
   // der Server sie bestätigt.
   time_t now = time(nullptr);
   String ownUid = stampingBuffer.add(newRfidId, now);
+  counters.stamped++;
+  Card_Detail = "";
   if (ownUid.length() == 0)
   {
     CardResult = CARD_ERROR;
@@ -124,6 +163,8 @@ void SendCardID()
   // dieser Stempelung wurde — auch wenn davor noch Liegengebliebenes mitgeht.
   UploadOutcome outcome = stampingUploader.flush(ownUid);
   lastFlushAttempt = millis();
+  counters.uploaded += outcome.delivered;
+  Card_Detail = dayDetail(outcome);
 
   if (!outcome.ok)
   {
@@ -181,6 +222,9 @@ void persistConfig()
   json["time_server"] = time_server;
   json["backend_server"] = backend_server;
   json["device_token"] = device_token;
+  // Zuletzt vom Server bekommene Zeitzone: nach einem Neustart ohne Netz
+  // stimmt die Uhr sonst um die Sommerzeit nicht.
+  json["tz"] = remoteConfig.tz;
 
   File configFile = SPIFFS.open("/config.json", "w");
   if (!configFile)
@@ -220,25 +264,28 @@ void resetLastCard()
 {
   OldCardID = "";
   newRfidId = "";
+  // Während gesendet wurde, lief keine Abfrage. Liegt die Karte noch, soll
+  // sie jetzt nicht als neu gelten.
+  heldCardSeenMs = millis();
   TimerEventCardRead =  readerTimer.every(300, checkNewCard);
   readerTimer.stop(TimerEventCardClear);
 }
 
 void checkNewCard()
 {
-  if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
+  String uid;
+  if (!cardReader.readCard(uid))
   {
     return;
   }
-
-  for (byte i = 0; i < mfrc522.uid.size; i++)
+  const bool stillHeld = uid == heldCardUid && millis() - heldCardSeenMs < CARD_GONE_MS;
+  heldCardUid = uid;
+  heldCardSeenMs = millis();
+  if (stillHeld)
   {
-    // !! Achtung es wird ein Leerzeichen vor der ID gesetzt !!
-    newRfidId.concat(mfrc522.uid.uidByte[i] < 0x10 ? "0" : "");
-    newRfidId.concat(String(mfrc522.uid.uidByte[i], HEX));
+    return;
   }
-  // alle Buchstaben in Großbuchstaben umwandeln
-  newRfidId.toUpperCase();
+  newRfidId = uid;
   // Wenn die neue gelesene RFID-ID ungleich der bereits zuvor gelesenen ist,
   // dann soll diese auf der seriellen Schnittstelle ausgegeben werden.
   if (!newRfidId.equals(OldCardID))
@@ -248,8 +295,73 @@ void checkNewCard()
     //---------------------------------------------
     CardResult = CARD_SEND;
     Serial.println(newRfidId);
-    TimerEventCardSend = readerTimer.every(500, SendCardID);
+    // Kurz Luft lassen, damit "bitte warten" auf dem Display steht, bevor
+    // die Anfrage den Ablauf für eine Sekunde anhält.
+    TimerEventCardSend = readerTimer.every(50, SendCardID);
     readerTimer.stop(TimerEventCardRead);
+  }
+}
+
+// Farben der Teile eines Symbols, in der Reihenfolge, in der sie beim Lesen
+// von oben links zuerst auftauchen (siehe Screen::centerIcon).
+static const uint16_t CHECKIN_COLORS[] = {Screen::WHITE, Screen::GREEN};   // Tür, Pfeil
+static const uint16_t CHECKOUT_COLORS[] = {Screen::WHITE, Screen::ORANGE}; // Tür, Pfeil
+static const uint16_t WIFI_COLORS[] = {0x2B1F, Screen::BLUE, 0x7EFF, Screen::WHITE};
+static const uint16_t WIFI_START_COLORS[] = {Screen::GREY, Screen::GREY, Screen::GREY,
+                                             Screen::ORANGE, Screen::GREY, Screen::WHITE};
+
+/** Ruhebildschirm: Uhr, Name des Lesers — und was nicht stimmt. */
+static void idleScreen()
+{
+  const int16_t small = screen.lineHeight(1) + 2;
+  int16_t y = 0;
+
+  if (Screen::HAS_COLOR)
+  {
+    time_t now = time(nullptr);
+    if (now > 1600000000)
+    {
+      struct tm local;
+      localtime_r(&now, &local);
+      char clock[6];
+      snprintf(clock, sizeof(clock), "%02d:%02d", local.tm_hour, local.tm_min);
+      screen.centerText(clock, 4, 4);
+    }
+    y = 4 + screen.lineHeight(4) + 6;
+    screen.centerText(remoteConfig.name, y, 1, Screen::GREY);
+    y += small;
+  }
+
+  // Hinweise, wichtigstes zuerst. Auf dem OLED ist der Bildschirm sonst
+  // schwarz, damit sich nichts einbrennt — Hinweise zeigt er trotzdem.
+  if (strcmp(device_token, PLACEHOLDER_TOKEN) == 0)
+  {
+    screen.centerText("Nicht eingerichtet", y, 1, Screen::RED);
+    y += small;
+    screen.centerText("http://" + WiFi.localIP().toString(), y, 1, Screen::YELLOW);
+    y += small;
+    screen.centerText(String("admin / ") + PLACEHOLDER_TOKEN, y, 1, Screen::YELLOW);
+    return;
+  }
+  if (!cardReader.found())
+  {
+    screen.centerText("Kein Kartenleser", y, 1, Screen::RED);
+    y += small;
+  }
+  if (remoteConfig.mode == "learn")
+  {
+    screen.centerText("Karten anlernen", y, 1, Screen::YELLOW);
+    y += small;
+  }
+  if (!WiFi.isConnected())
+  {
+    screen.centerText("Kein WLAN", y, 1, Screen::ORANGE);
+    y += small;
+  }
+  size_t pending = stampingBuffer.count();
+  if (pending > 0)
+  {
+    screen.centerText(String(pending) + " im Puffer", y, 1, Screen::ORANGE);
   }
 }
 
@@ -258,133 +370,154 @@ void display_routine()
   // only if nothing to be displayed
   if (!display_timeout)
   {
-    display.clearDisplay();
-    display.setTextSize(2);      // Normal 1:1 pixel scale
-    display.setTextColor(WHITE); // Draw white text
+    screen.clear();
+    const int16_t line = screen.lineHeight(2) + 4;
     switch (CardResult)
     {
     case CARD_SEND:
-    {
-      display.setCursor(0, 0);
-      display.print("bitte warten");
-      // display_timeout = millis() + 100;
-    }
-    break;
+      screen.centerText("bitte warten", 0, 2);
+      break;
     case DEVICE_READY:
-      display.setCursor(8, 0); // Start at top-left corner
-      display.print(F("Verbunden \n"));
-      display.drawBitmap(33, 15, Wifi_connected_bits, Wifi_connected_width, Wifi_connected_height, WHITE);
+      screen.centerText("Verbunden", 0, 2);
+      screen.centerIcon(Wifi_connected_bits, Wifi_connected_width, Wifi_connected_height,
+                        screen.height() - screen.iconHeight(Wifi_connected_height), WIFI_COLORS, 4);
       display_timeout = millis() + 5000;
       break;
     case LOGIN_PICTURE:
-      display.drawBitmap(5, 15, checkin_bits, CheckInOut_width, CheckInOut_height, WHITE);
+      screen.centerIcon(checkin_bits, CheckInOut_width, CheckInOut_height,
+                        (screen.height() - screen.iconHeight(CheckInOut_height)) / 2, CHECKIN_COLORS, 2);
       display_timeout = millis() + 1000;
       break;
     case LOGIN_NAME:
-    {
-      display.setCursor(0, 0);
-      display.print("Willkommen");
-      display.setCursor(0, 20);
-      display.print(Card_Message);
+      screen.centerText("Willkommen", 0, 2, Screen::GREEN);
+      screen.centerText(Card_Message, line, 2);
+      screen.centerText(Card_Detail, 2 * line, 2, Screen::GREY);
       display_timeout = millis() + 3000;
-    }
-    break;
+      break;
     case LOGOUT_PICTURE:
-    {
-      display.drawBitmap(5, 15, checkout_bits, CheckInOut_width, CheckInOut_height, WHITE);
+      screen.centerIcon(checkout_bits, CheckInOut_width, CheckInOut_height,
+                        (screen.height() - screen.iconHeight(CheckInOut_height)) / 2, CHECKOUT_COLORS, 2);
       display_timeout = millis() + 1000;
-    }
-    break;
+      break;
     case LOGOUT_NAME:
-    {
-      display.setCursor(0, 0);
-      display.print("Tschuess");
-      display.setCursor(0, 20);
-      display.print(Card_Message);
-      display_timeout = millis() + 2000;
-    }
-    break;
-    case TIME:
-    {
-      time_t now = time(nullptr);
-      struct tm *p_tm = localtime(&now);
-      display.setTextSize(4); // Normal 2:2 pixel scale
-      display.setCursor(0, 21);
-      if ((p_tm->tm_hour) < 10)
-      {
-        display.print("0");
-        display.print(p_tm->tm_hour);
-      }
-      else
-      {
-        display.print(p_tm->tm_hour);
-      }
-      display.print(":");
-      if ((p_tm->tm_min) < 10)
-      {
-        display.print("0");
-        display.println(p_tm->tm_min);
-      }
-      else
-      {
-        display.println(p_tm->tm_min);
-      }
-    }
-    break;
+      screen.centerText("Tschuess", 0, 2, Screen::ORANGE);
+      screen.centerText(Card_Message, line, 2);
+      screen.centerText(Card_Detail, 2 * line, 2, Screen::GREY);
+      display_timeout = millis() + 3000;
+      break;
     case CARD_ADD:
-    {
-      display.setCursor(5, 0); // Start at top-left corner
-      display.print(F("Neue Karte"));
+      screen.centerText("Neue Karte", 0, 2, Screen::YELLOW);
       display_timeout = millis() + 3000;
-    }
-    break;
+      break;
     case CARD_FREE:
-    {
-      display.setCursor(5, 0); // Start at top-left corner
-      display.print(F("Leere Karte"));
+      screen.centerText("Leere Karte", 0, 2, Screen::YELLOW);
       display_timeout = millis() + 3000;
-    }
-    break;
+      break;
     case CARD_ERROR:
-    {
-      display.setCursor(0, 0);
-      display.print(Card_Message);
+      screen.centerText(Card_Message, 0, 2, Screen::RED);
       display_timeout = millis() + 2000;
-    }
-    break;
+      break;
 
     default:
       CardResult = IDLE;
+      idleScreen();
     }
-    display.display();
+    screen.show();
   }
   // Clear Screen
   if (display_timeout && display_timeout < millis())
   {
     display_timeout = 0; // Stop Routine from Displaying new stuff
-    display.clearDisplay();
+    screen.clear();
     // Decide whats next
     switch (CardResult)
     {
-    case DEVICE_READY:
-      CardResult = IDLE;
-      break;
     case LOGIN_PICTURE:
       CardResult = LOGIN_NAME;
       break;
-    case LOGIN_NAME:
-      CardResult = IDLE;
-      break;
     case LOGOUT_PICTURE:
       CardResult = LOGOUT_NAME;
-      break;
-    case LOGOUT_NAME:
-      CardResult = IDLE;
       break;
     default:
       CardResult = IDLE;
     }
   }
+}
+
+/** Zeitzone und Zeitserver setzen; die Regel bringt die Sommerzeit mit. */
+static void applyTime()
+{
+  const char *ntp = remoteConfig.ntpServer.length() ? remoteConfig.ntpServer.c_str() : time_server;
+  configTzTime(remoteConfig.tz.c_str(), ntp, time_server);
+}
+
+/** Konfiguration vom Server holen; geänderte Zeitzone sofort anwenden und merken. */
+static void refreshConfig()
+{
+  lastConfigFetch = millis();
+  String tzBefore = remoteConfig.tz;
+  String ntpBefore = remoteConfig.ntpServer;
+  if (!deviceApi.fetchConfig(remoteConfig))
+  {
+    return;
+  }
+  Serial.printf("Konfiguration: %s, Modus %s, TZ %s\n", remoteConfig.name.c_str(),
+                remoteConfig.mode.c_str(), remoteConfig.tz.c_str());
+  if (tzBefore != remoteConfig.tz || ntpBefore != remoteConfig.ntpServer)
+  {
+    applyTime();
+    persistConfig();
+  }
+}
+
+static String uptimeText()
+{
+  unsigned long s = millis() / 1000UL;
+  char text[24];
+  snprintf(text, sizeof(text), "%lud %02lu:%02lu:%02lu", s / 86400, (s / 3600) % 24, (s / 60) % 60, s % 60);
+  return text;
+}
+
+/** Inhalt der offenen Statusseite des Lesers — nichts Geheimes, keine Namen. */
+static void fillStatus(ConfigPortal::StatusLines &lines)
+{
+  time_t now = time(nullptr);
+  String clock = "unbekannt";
+  if (now > 1600000000)
+  {
+    struct tm local;
+    localtime_r(&now, &local);
+    char text[24];
+    strftime(text, sizeof(text), "%d.%m.%Y %H:%M:%S", &local);
+    clock = text;
+  }
+  String host = backend_server;
+  host.replace("https://", "");
+  host.replace("http://", "");
+  host = host.substring(0, host.indexOf('/') >= 0 ? host.indexOf('/') : host.length());
+
+  lines.push_back({"firmware", "Firmware", CODE_VERSION});
+  lines.push_back({"name", "Name im Panel", remoteConfig.name.length() ? remoteConfig.name : String("–")});
+  lines.push_back({"mode", "Modus", remoteConfig.mode == "learn" ? "Karten anlernen" : "Zeiterfassung"});
+  lines.push_back({"configured", "Eingerichtet", strcmp(device_token, PLACEHOLDER_TOKEN) == 0 ? "nein" : "ja"});
+  lines.push_back({"reader", "Kartenleser", cardReader.name()});
+  lines.push_back({"server", "Server", host});
+  lines.push_back({"api", "Schnittstelle", deviceApi.usesLegacyStampings() ? "/api/v1/stampings (Server noch alt)" : "/api/v1/device"});
+  lines.push_back({"time", "Uhrzeit", clock});
+  lines.push_back({"uptime", "Läuft seit", uptimeText()});
+  lines.push_back({"ip", "Adresse", WiFi.localIP().toString()});
+  lines.push_back({"ssid", "WLAN", WiFi.SSID()});
+  lines.push_back({"rssi", "Empfang", String(WiFi.RSSI()) + " dBm"});
+  lines.push_back({"pending", "Im Puffer", String((unsigned)stampingBuffer.count())});
+  lines.push_back({"stamped", "Gestempelt seit Start", String(counters.stamped)});
+  lines.push_back({"uploaded", "Zugestellt seit Start", String(counters.uploaded)});
+  lines.push_back({"free_heap", "Freier Speicher", String(ESP.getFreeHeap() / 1024) + " KB"});
+}
+
+static void reportStatus()
+{
+  lastStatusReport = millis();
+  deviceApi.reportStatus(cardReader.name(), stampingBuffer.count(), counters);
 }
 
 //************************************************************************
@@ -393,35 +526,34 @@ void setup()
   delay(1000);
   Serial.begin(115200);
   Serial.print("Startup RFID Attendance v");
-  Serial.print(CODE_VERSION);
+  Serial.println(CODE_VERSION);
 
-  //-----------start rfid reader-------------
-  delay(1000);
-  SPI.begin();        // Init SPI bus
-  mfrc522.PCD_Init(); // Init MFRC522 card
-  delay(1000);        //
-  mfrc522.PCD_DumpVersionToSerial();
-  //---------------------------------------------
-
-  //-----------initiate OLED display-------------
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
-  { // Address 0x3D for 128x64
+  //-----------initiate display-------------
+  if (!screen.begin())
+  {
     Serial.println(F("Display allocation failed"));
     Serial.println(F("Restart in 5s - as no feedback possible"));
     delay(5000);
     ESP.restart();
   }
-  //rotate screen if needed
-  display.setRotation(2);
-  display.clearDisplay();
-  display.setTextSize(1);      // Normal 1:1 pixel scale
-  display.setTextColor(WHITE); // Draw white text
-  display.setCursor(0, 0);     // Start at top-left corner
-  display.print(F("Startet \n"));
-  display.setCursor(0, 50);
-  display.setTextSize(2);
-  display.drawBitmap(73, 10, Wifi_start_bits, Wifi_start_width, Wifi_start_height, WHITE);
-  display.display();
+  screen.clear();
+  screen.centerText("Startet", 0, 2);
+  screen.centerIcon(Wifi_start_bits, Wifi_start_width, Wifi_start_height,
+                    screen.height() - screen.iconHeight(Wifi_start_height), WIFI_START_COLORS, 6);
+  // Version oben rechts: wer vor dem Gerät steht, soll sie ablesen können.
+  screen.rightText(String("v") + CODE_VERSION, screen.height() - screen.lineHeight(1), 1, Screen::GREY);
+  screen.show();
+
+  //-----------start rfid reader-------------
+  // Wer den Leser aufbaut, soll sofort sehen, ob er richtig verdrahtet ist.
+  bool readerFound = cardReader.begin();
+  screen.clear();
+  screen.centerText(readerFound ? "Leser erkannt" : "Kein Leser!", 0, 2,
+                    readerFound ? Screen::GREEN : Screen::RED);
+  screen.centerText(readerFound ? cardReader.name() : String("PN532 / RC522 pruefen"),
+                    screen.lineHeight(2) + 8, 1);
+  screen.show();
+  delay(1500);
 
   //-----------init and load config from spiffs-------------
   Serial.println("mounting FS...");
@@ -452,6 +584,10 @@ void setup()
           strcpy(time_server, json["time_server"]);
           strcpy(backend_server, json["backend_server"]);
           strcpy(device_token, json["device_token"]);
+          if (json.containsKey("tz"))
+          {
+            remoteConfig.tz = json["tz"].as<String>();
+          }
         }
         else
         {
@@ -475,6 +611,15 @@ void setup()
 
   // set config save notify callback
   wifiManager.setSaveConfigCallback(saveConfigCallback);
+  // Ohne bekanntes WLAN wartet das Gerät hier, bis jemand es einrichtet.
+  // Wer davorsteht, soll lesen können, womit er sich verbinden muss.
+  wifiManager.setAPCallback([](WiFiManager *wm) {
+    screen.clear();
+    screen.centerText("Einrichten:", 0, 1);
+    screen.centerText(wm->getConfigPortalSSID(), screen.lineHeight(1) + 4, 1);
+    screen.centerText("192.168.4.1", 2 * (screen.lineHeight(1) + 4), 1);
+    screen.show();
+  });
   wifiManager.addParameter(&custom_time_server);
   wifiManager.addParameter(&custom_backend_server);
   wifiManager.addParameter(&custom_device_token);
@@ -497,13 +642,15 @@ void setup()
     delay(5000);
   }
 
-  //---------------------------------------------
-  configTime(timezone * 3600, time_dst, time_server, "time.nist.gov");
+  //-----------Uhrzeit, Server-Konfiguration-------------
+  applyTime();
+  deviceApi.configure(backend_server, device_token, CODE_VERSION);
+  refreshConfig();
 
   //-----------Puffer und Upload-------------
   stampingBuffer.begin();
-  stampingUploader.configure(backend_server, device_token, CODE_VERSION);
   Serial.printf("Gepufferte Stempelungen: %u\n", (unsigned)stampingBuffer.count());
+  reportStatus();
 
   //-----------Konfiguration im Betrieb-------------
   // Eigene, passwortgeschützte Seite statt des WiFiManager-Portals: dessen
@@ -514,7 +661,7 @@ void setup()
       backend_server, sizeof(backend_server),
       device_token, sizeof(device_token),
   };
-  configPortal.begin(fields, persistConfig);
+  configPortal.begin(fields, persistConfig, fillStatus);
 
   Serial.println("device ready");
   CardResult = DEVICE_READY;
@@ -555,13 +702,31 @@ void loop()
     WiFi.reconnect();
   }
 
+  // Nur im Ruhezustand: mitten im Stempeln soll niemand den Leser neu starten.
+  if (CardResult == IDLE && millis() - lastReaderCheck > READER_CHECK_MS)
+  {
+    lastReaderCheck = millis();
+    cardReader.check();
+  }
+
+  // Beim Server melden und nachsehen, ob sich im Panel etwas geändert hat.
+  if (WiFi.isConnected() && millis() - lastStatusReport > remoteConfig.statusSeconds * 1000UL)
+  {
+    reportStatus();
+  }
+  if (WiFi.isConnected() && millis() - lastConfigFetch > remoteConfig.configSeconds * 1000UL)
+  {
+    refreshConfig();
+  }
+
   // Liegengebliebenes nachliefern, sobald wieder Netz da ist.
-  if (WiFi.isConnected() && millis() - lastFlushAttempt > FLUSH_INTERVAL_MS)
+  if (WiFi.isConnected() && millis() - lastFlushAttempt > remoteConfig.flushSeconds * 1000UL)
   {
     lastFlushAttempt = millis();
     if (!stampingBuffer.isEmpty())
     {
       UploadOutcome outcome = stampingUploader.flush();
+      counters.uploaded += outcome.delivered;
       if (outcome.delivered > 0)
       {
         Serial.printf("%u gepufferte Stempelungen zugestellt\n", (unsigned)outcome.delivered);
