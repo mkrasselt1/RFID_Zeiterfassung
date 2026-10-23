@@ -25,6 +25,7 @@ use Illuminate\Validation\Rule;
  *   DELETE /api/v1/admin/stampings/{id}
  *   GET    /api/v1/admin/absences?from=&to=[&employee_id=]
  *   POST   /api/v1/admin/absences           {employee_id, type, start_date, end_date, half_day?, reason?}
+ *   POST   /api/v1/admin/absences/{id}/approve
  *
  * Zeiten sind lokale Uhrzeit, wie sie auch die Leser schreiben. Jede Änderung
  * rechnet den betroffenen Tag im Arbeitszeitkonto neu, wie im Panel auch.
@@ -220,6 +221,21 @@ class AdminApiController extends Controller
         $this->worktime->recalculateForAbsence($absence);
 
         return response()->json(['absence' => $this->presentAbsence($absence)], 201);
+    }
+
+    /** Genehmigen wie im Panel: Status, Genehmiger, Zeitpunkt, Konto neu rechnen. */
+    public function approveAbsence(Absence $absence): JsonResponse
+    {
+        if ($absence->status !== Absence::STATUS_APPROVED) {
+            $absence->update([
+                'status' => Absence::STATUS_APPROVED,
+                'approver_id' => Auth::id(),
+                'decided_at' => Carbon::now(),
+            ]);
+            $this->worktime->recalculateForAbsence($absence);
+        }
+
+        return response()->json(['absence' => $this->presentAbsence($absence)]);
     }
 
     private function present(UserLog $log): array

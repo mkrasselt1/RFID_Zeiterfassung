@@ -223,4 +223,19 @@ class AdminApiTest extends TestCase
         $this->assertSame(480, $day->worked_minutes);
         $this->assertSame(['employee_id' => $this->worker->id], UserLogChange::sole()->after);
     }
+
+    public function test_approves_a_pending_absence(): void
+    {
+        $absence = $this->worker->absences()->create([
+            'type' => Absence::TYPE_VACATION, 'start_date' => '2026-06-10',
+            'end_date' => '2026-06-10', 'status' => Absence::STATUS_PENDING,
+        ]);
+
+        $this->asAdmin()->postJson("/api/v1/admin/absences/{$absence->id}/approve")
+            ->assertOk()
+            ->assertJsonPath('absence.status', Absence::STATUS_APPROVED);
+
+        $this->assertSame($this->admin->id, $absence->fresh()->approver_id);
+        $this->assertNotNull(WorkDay::where('employee_id', $this->worker->id)->where('work_date', '2026-06-10')->value('absence_id'));
+    }
 }

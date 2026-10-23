@@ -55,6 +55,7 @@ Route::prefix('api/v1/admin')
         Route::delete('/stampings/{log}', [AdminApiController::class, 'destroyStamping'])->name('api.admin.stampings.destroy');
         Route::get('/absences', [AdminApiController::class, 'absences'])->name('api.admin.absences');
         Route::post('/absences', [AdminApiController::class, 'storeAbsence'])->name('api.admin.absences.store');
+        Route::post('/absences/{absence}/approve', [AdminApiController::class, 'approveAbsence'])->name('api.admin.absences.approve');
     });
 
 // Google OAuth callback (replaces legacy google-login.php).
